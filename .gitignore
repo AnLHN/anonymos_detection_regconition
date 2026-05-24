@@ -1,0 +1,44 @@
+# Secrets and local config
+.env
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Runtime storage
+ai_worker/outputs/
+storage/snapshots/*
+storage/logs/*
+storage/debug_faces/*
+!storage/snapshots/.gitkeep
+!storage/logs/.gitkeep
+!storage/debug_faces/.gitkeep
+
+# Large/private exports
+data/exports/*.json
+!data/exports/.gitkeep
+
+# Local Claude/project state
+.claude/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Model/cache artifacts
+models/
+.insightface/

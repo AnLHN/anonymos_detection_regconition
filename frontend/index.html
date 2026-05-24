@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Unknown Detection Admin</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="login-view" class="card login-card">
+        <h1>Unknown Detection Admin</h1>
+        <p>Đăng nhập để xem dashboard giám sát.</p>
+        <form id="login-form">
+          <label>
+            Username
+            <input id="username" autocomplete="username" value="admin" required />
+          </label>
+          <label>
+            Password
+            <input id="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Đăng nhập</button>
+        </form>
+        <p id="login-error" class="error"></p>
+      </section>
+
+      <section id="dashboard-view" class="hidden">
+        <header class="topbar">
+          <div>
+            <h1>Unknown Detection Admin</h1>
+            <p id="health-status">Đang kiểm tra hệ thống...</p>
+          </div>
+          <button id="logout-button" class="secondary">Đăng xuất</button>
+        </header>
+
+        <section class="grid metrics">
+          <article class="card">
+            <span class="metric-label">Alerts</span>
+            <strong id="metric-alerts">0</strong>
+          </article>
+          <article class="card">
+            <span class="metric-label">Cameras</span>
+            <strong id="metric-cameras">0</strong>
+          </article>
+          <article class="card">
+            <span class="metric-label">Rules</span>
+            <strong id="metric-rules">0</strong>
+          </article>
+          <article class="card">
+            <span class="metric-label">Employees</span>
+            <strong id="metric-employees">0</strong>
+          </article>
+        </section>
+
+        <section class="grid two-columns">
+          <article class="card">
+            <h2>Cảnh báo mới nhất</h2>
+            <div id="alerts-list" class="list"></div>
+          </article>
+          <article class="card">
+            <h2>Camera</h2>
+            <div id="cameras-list" class="list"></div>
+          </article>
+          <article class="card">
+            <h2>Rules</h2>
+            <div id="rules-list" class="list"></div>
+          </article>
+          <article class="card">
+            <h2>Employees</h2>
+            <div id="employees-list" class="list"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

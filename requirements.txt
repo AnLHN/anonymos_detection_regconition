@@ -1,0 +1,11 @@
+albumentations
+fastapi
+httpx
+insightface
+numpy
+onnxruntime
+opencv-python
+psycopg[binary]
+PyJWT
+python-dotenv
+uvicorn

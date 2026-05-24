@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: unknown-detection-postgres
+    environment:
+      POSTGRES_DB: face_db
+      POSTGRES_USER: face_user
+      POSTGRES_PASSWORD: face_password
+    ports:
+      - "7001:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U face_user -d face_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: unknown-detection-qdrant
+    ports:
+      - "7002:6333"
+      - "7003:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres_data:
+  qdrant_data:
