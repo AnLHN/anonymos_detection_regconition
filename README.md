@@ -1,4 +1,5 @@
 # Anonymous Detection & Recognition
+<img width="1897" height="872" alt="image" src="https://github.com/user-attachments/assets/01a124e1-6e7b-4574-b9ff-938ed5a44e6b" />
 
 Hệ thống phát hiện người lạ dựa trên camera/RTSP, InsightFace local, Qdrant vector search và Postgres event store.
 
