@@ -157,14 +157,3 @@ Xem workflow tại:
 ```text
 .github/workflows/ci.yml
 ```
-
-## Trạng thái production
-
-Repo hiện là bản prototype/production-base. Các phần còn cần hoàn thiện trước khi production thật:
-
-- Camera worker service quản lý nhiều camera từ DB.
-- Frontend alert detail + snapshot viewer + review status.
-- Rule Engine đọc cấu hình từ Postgres.
-- Benchmark dataset thật và khóa threshold.
-- Dockerfile backend/frontend/worker.
-- Deployment guide đầy đủ.
