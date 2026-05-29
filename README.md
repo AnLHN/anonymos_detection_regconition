@@ -95,14 +95,6 @@ Health check:
 GET http://localhost:8000/system/health
 ```
 
-## Chạy frontend admin
-
-Mở file sau trong browser:
-
-```text
-frontend/index.html
-```
-
 Tài khoản dev phụ thuộc dữ liệu export trong bảng `accounts`.
 
 ## Chạy camera từ `.env`
