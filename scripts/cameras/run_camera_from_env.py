@@ -21,7 +21,7 @@ def main() -> None:
 
     command = [
         sys.executable,
-        "ai_worker/run_webcam.py",
+        "ai_worker/run_rtsp.py",
         "--camera-id",
         camera["camera_id"],
         "--source",

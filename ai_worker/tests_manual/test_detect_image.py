@@ -6,6 +6,7 @@ import cv2
 
 ROOT = Path(__file__).resolve().parents[2]
 SYSTEM_DIR = ROOT / "ai_worker"
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SYSTEM_DIR))
 
 from insightface_detector import InsightFaceDetector, draw_faces

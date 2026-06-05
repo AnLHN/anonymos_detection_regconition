@@ -1,4 +1,5 @@
 import json
+import time
 from urllib import request
 
 from config import QDRANT_COLLECTION, QDRANT_HOST, QDRANT_PORT, TOP_K
@@ -9,7 +10,7 @@ class QdrantHttpService:
     def __init__(self, host: str = QDRANT_HOST, port: int = QDRANT_PORT) -> None:
         self.base_url = f"http://{host}:{port}"
 
-    def search(self, vector: list[float], top_k: int = TOP_K) -> list[SearchCandidate]:
+    def search(self, vector: list[float], top_k: int = TOP_K) -> tuple[list[SearchCandidate], float]:
         payload = {
             "vector": vector,
             "limit": top_k,
@@ -22,8 +23,10 @@ class QdrantHttpService:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        started_at = time.perf_counter()
         with request.urlopen(req, timeout=30) as response:
             result = json.loads(response.read().decode("utf-8"))["result"]
+        latency_ms = (time.perf_counter() - started_at) * 1000
 
         return [
             SearchCandidate(
@@ -32,4 +35,23 @@ class QdrantHttpService:
                 payload=EmployeePayload.from_qdrant_payload(item["payload"]),
             )
             for item in result
-        ]
+        ], latency_ms
+
+    def upsert_employee_face(self, employee_id: int, vector: list[float], payload: dict) -> None:
+        body = {
+            "points": [
+                {
+                    "id": employee_id,
+                    "vector": vector,
+                    "payload": payload,
+                }
+            ]
+        }
+        req = request.Request(
+            f"{self.base_url}/collections/{QDRANT_COLLECTION}/points?wait=true",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        with request.urlopen(req, timeout=30):
+            pass

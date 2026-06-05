@@ -1,0 +1,337 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: unknown-detection-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DATABASE:-face_db}
+      POSTGRES_USER: ${POSTGRES_USER:-face_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-face_password}
+    ports:
+      - "${POSTGRES_PORT:-7001}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-face_user} -d ${POSTGRES_DATABASE:-face_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: unknown-detection-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-7002}:6333"
+      - "7003:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    container_name: unknown-detection-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: unknown-detection-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-face_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-face_password}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: unknown-detection-mediamtx
+    restart: unless-stopped
+    environment:
+      CAMERA_DOOR_67B_RTSP: ${CAMERA_DOOR_67B_RTSP}
+      CAMERA_AI_PM_1_RTSP: ${CAMERA_AI_PM_1_RTSP}
+      CAMERA_AI_PM_2_RTSP: ${CAMERA_AI_PM_2_RTSP}
+      MEDIAMTX_RTSP_TRANSPORT: ${MEDIAMTX_RTSP_TRANSPORT:-tcp}
+    ports:
+      - "${MEDIAMTX_WEBRTC_PORT:-8889}:8889"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    logging: *default-logging
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: unknown-detection-backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DSN: host=postgres port=5432 dbname=${POSTGRES_DATABASE:-face_db} user=${POSTGRES_USER:-face_user} password=${POSTGRES_PASSWORD:-face_password}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-face_user}:${RABBITMQ_DEFAULT_PASS:-face_password}@rabbitmq:5672/
+      PROMETHEUS_URL: http://prometheus:9090
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/system/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  worker:
+    build:
+      context: ..
+      dockerfile: ai_worker/Dockerfile
+    container_name: unknown-detection-worker
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DSN: host=postgres port=5432 dbname=${POSTGRES_DATABASE:-face_db} user=${POSTGRES_USER:-face_user} password=${POSTGRES_PASSWORD:-face_password}
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-face_user}:${RABBITMQ_DEFAULT_PASS:-face_password}@rabbitmq:5672/
+    volumes:
+      - ../storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python scripts/cameras/worker_healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+
+  alert-consumer:
+    build:
+      context: ..
+      dockerfile: ai_worker/Dockerfile
+    container_name: unknown-detection-alert-consumer
+    restart: unless-stopped
+    command: ["python", "scripts/alerts/run_alert_consumer.py"]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DSN: host=postgres port=5432 dbname=${POSTGRES_DATABASE:-face_db} user=${POSTGRES_USER:-face_user} password=${POSTGRES_PASSWORD:-face_password}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-face_user}:${RABBITMQ_DEFAULT_PASS:-face_password}@rabbitmq:5672/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    logging: *default-logging
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE: ${FRONTEND_API_BASE:-/api}
+        NEXT_PUBLIC_GRAFANA_DASHBOARD_URL: ${NEXT_PUBLIC_GRAFANA_DASHBOARD_URL:-http://localhost:3001/d/unknown-detection-monitoring/unknown-detection-monitoring?kiosk}
+    container_name: unknown-detection-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE: ${FRONTEND_API_BASE:-/api}
+      NEXT_PUBLIC_GRAFANA_DASHBOARD_URL: ${NEXT_PUBLIC_GRAFANA_DASHBOARD_URL:-http://localhost:3001/d/unknown-detection-monitoring/unknown-detection-monitoring?kiosk}
+    depends_on:
+      backend:
+        condition: service_started
+    logging: *default-logging
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: unknown-detection-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: unknown-detection-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+    logging: *default-logging
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: unknown-detection-alertmanager
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: unknown-detection-grafana
+    profiles: ["grafana"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ALLOW_EMBEDDING: ${GRAFANA_ALLOW_EMBEDDING:-true}
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: ${GRAFANA_AUTH_ANONYMOUS_ORG_ROLE:-Viewer}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./grafana-dashboard-unknown-detection.json:/etc/grafana/provisioning/dashboards/unknown-detection.json:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+    logging: *default-logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: unknown-detection-node-exporter
+    profiles: ["linux-metrics"]
+    restart: unless-stopped
+    command:
+      - "--path.rootfs=/host"
+    pid: host
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /:/host:ro,rslave
+    logging: *default-logging
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: unknown-detection-cadvisor
+    profiles: ["linux-metrics"]
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "${CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    logging: *default-logging
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: unknown-detection-redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: unknown-detection-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER:-face_user}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DATABASE:-face_db}?sslmode=disable
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

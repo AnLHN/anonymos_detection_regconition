@@ -1,0 +1,50 @@
+{
+  "image_count": 2,
+  "face_count": 4,
+  "summary": {
+    "count": 2,
+    "avg_ms": 1311.874649982201,
+    "min_ms": 1211.9386999984272,
+    "max_ms": 1411.8105999659747,
+    "p50_ms": 1211.9386999984272,
+    "p95_ms": 1411.8105999659747
+  },
+  "quality": {
+    "labeled_images": 2,
+    "known_images": 1,
+    "unknown_images": 1,
+    "known_accuracy": 1.0,
+    "unknown_detection_rate": 1.0,
+    "false_accept_rate": 1.0,
+    "false_reject_rate": 0.0,
+    "unverified_rate": 0.0
+  },
+  "items": [
+    {
+      "image": "data\\benchmark\\known\\manual_static_known_full.jpg",
+      "expected": "known",
+      "latency_ms": 1211.9386999984272,
+      "faces": 2,
+      "statuses": [
+        "unknown",
+        "known"
+      ],
+      "best_score": 0.5826002,
+      "best_label": "Hồ Văn Phương",
+      "best_employee_id": 26
+    },
+    {
+      "image": "data\\benchmark\\unknown\\manual_static_unknown_full.jpg",
+      "expected": "unknown",
+      "latency_ms": 1411.8105999659747,
+      "faces": 2,
+      "statuses": [
+        "unknown",
+        "known"
+      ],
+      "best_score": 0.5826002,
+      "best_label": "Hồ Văn Phương",
+      "best_employee_id": 26
+    }
+  ]
+}

@@ -23,6 +23,9 @@ class PostgresEventService:
             warning_type,
             warning_level,
             reason,
+            rule_config,
+            recognition_threshold,
+            detection_threshold,
             bbox,
             best_match,
             snapshot_full,
@@ -38,6 +41,9 @@ class PostgresEventService:
             %(warning_type)s,
             %(warning_level)s,
             %(reason)s,
+            %(rule_config)s,
+            %(recognition_threshold)s,
+            %(detection_threshold)s,
             %(bbox)s,
             %(best_match)s,
             %(snapshot_full)s,
@@ -46,6 +52,7 @@ class PostgresEventService:
         """
         values = {
             **event,
+            "rule_config": json.dumps(event.get("rule_config") or {}, ensure_ascii=False),
             "bbox": json.dumps(event["bbox"], ensure_ascii=False),
             "best_match": json.dumps(event["best_match"], ensure_ascii=False) if event.get("best_match") else None,
         }

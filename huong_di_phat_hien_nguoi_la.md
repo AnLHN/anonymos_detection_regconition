@@ -1,155 +1,155 @@
-# Hướng đi triển khai hệ thống phát hiện người lạ chạy InsightFace local và Qdrant
+﻿# HÆ°á»›ng Ä‘i triá»ƒn khai há»‡ thá»‘ng phÃ¡t hiá»‡n ngÆ°á»i láº¡ cháº¡y InsightFace local vÃ  Qdrant
 
-## 1. Mục tiêu bài toán
+## 1. Má»¥c tiÃªu bÃ i toÃ¡n
 
-Hệ thống sẽ chạy **InsightFace trực tiếp trên máy của mình** để xử lý camera/video local. Không cần train lại model, chỉ dùng các model có sẵn của InsightFace cho hai phần chính:
+Há»‡ thá»‘ng sáº½ cháº¡y **InsightFace trá»±c tiáº¿p trÃªn mÃ¡y cá»§a mÃ¬nh** Ä‘á»ƒ xá»­ lÃ½ camera/video local. KhÃ´ng cáº§n train láº¡i model, chá»‰ dÃ¹ng cÃ¡c model cÃ³ sáºµn cá»§a InsightFace cho hai pháº§n chÃ­nh:
 
-- **Face detection**: phát hiện khuôn mặt trong frame.
-- **Face recognition**: trích xuất embedding khuôn mặt để so khớp.
-- Truy vấn database Qdrant để so khớp người đã đăng ký.
-- Hiển thị người đã biết bằng **khung xanh + tên trong database**.
-- Hiển thị người lạ bằng **khung đỏ + nhãn Unknown**.
-- Xây dựng cơ chế cảnh báo khi người lạ có hành vi đáng ngờ, ví dụ:
-  - Xuất hiện ngoài giờ làm việc.
-  - Lảng vảng ở khu vực cổng.
-  - Đi vào khu vực hạn chế.
-  - Xuất hiện nhiều lần trong một khoảng thời gian ngắn.
-- Khi có cảnh báo, hệ thống sẽ:
-  - Chụp lại ảnh người lạ.
-  - Lưu log sự kiện.
-  - Gửi cảnh báo lên giao diện hoặc hệ thống thông báo.
+- **Face detection**: phÃ¡t hiá»‡n khuÃ´n máº·t trong frame.
+- **Face recognition**: trÃ­ch xuáº¥t embedding khuÃ´n máº·t Ä‘á»ƒ so khá»›p.
+- Truy váº¥n database Qdrant Ä‘á»ƒ so khá»›p ngÆ°á»i Ä‘Ã£ Ä‘Äƒng kÃ½.
+- Hiá»ƒn thá»‹ ngÆ°á»i Ä‘Ã£ biáº¿t báº±ng **khung xanh + tÃªn trong database**.
+- Hiá»ƒn thá»‹ ngÆ°á»i láº¡ báº±ng **khung Ä‘á» + nhÃ£n Unknown**.
+- XÃ¢y dá»±ng cÆ¡ cháº¿ cáº£nh bÃ¡o khi ngÆ°á»i láº¡ cÃ³ hÃ nh vi Ä‘Ã¡ng ngá», vÃ­ dá»¥:
+  - Xuáº¥t hiá»‡n ngoÃ i giá» lÃ m viá»‡c.
+  - Láº£ng váº£ng á»Ÿ khu vá»±c cá»•ng.
+  - Äi vÃ o khu vá»±c háº¡n cháº¿.
+  - Xuáº¥t hiá»‡n nhiá»u láº§n trong má»™t khoáº£ng thá»i gian ngáº¯n.
+- Khi cÃ³ cáº£nh bÃ¡o, há»‡ thá»‘ng sáº½:
+  - Chá»¥p láº¡i áº£nh ngÆ°á»i láº¡.
+  - LÆ°u log sá»± kiá»‡n.
+  - Gá»­i cáº£nh bÃ¡o lÃªn giao diá»‡n hoáº·c há»‡ thá»‘ng thÃ´ng bÃ¡o.
 
 ---
 
-## 2. Định hướng tổng thể
+## 2. Äá»‹nh hÆ°á»›ng tá»•ng thá»ƒ
 
-Hướng làm chính:
+HÆ°á»›ng lÃ m chÃ­nh:
 
-> Không train model mới, chạy model InsightFace local trên máy của mình, dùng detection để lấy bbox khuôn mặt và recognition để lấy embedding, sau đó query Qdrant để phân loại Known / Unknown rồi đưa vào Rule Engine phát hiện người lạ đáng nghi.
+> KhÃ´ng train model má»›i, cháº¡y model InsightFace local trÃªn mÃ¡y cá»§a mÃ¬nh, dÃ¹ng detection Ä‘á»ƒ láº¥y bbox khuÃ´n máº·t vÃ  recognition Ä‘á»ƒ láº¥y embedding, sau Ä‘Ã³ query Qdrant Ä‘á»ƒ phÃ¢n loáº¡i Known / Unknown rá»“i Ä‘Æ°a vÃ o Rule Engine phÃ¡t hiá»‡n ngÆ°á»i láº¡ Ä‘Ã¡ng nghi.
 
-Model nguồn tham khảo:
+Model nguá»“n tham kháº£o:
 
 - Detection: `https://github.com/deepinsight/insightface/tree/master/detection`
 - Recognition: `https://github.com/deepinsight/insightface/tree/master/recognition`
 
-Luồng tổng thể:
+Luá»“ng tá»•ng thá»ƒ:
 
 ```text
 Camera / Video Stream
-        ↓
+        â†“
 InsightFace local detection
-        ↓
+        â†“
 Crop / align face
-        ↓
+        â†“
 InsightFace local recognition
-        ↓
-Nhận embedding khuôn mặt
-        ↓
+        â†“
+Nháº­n embedding khuÃ´n máº·t
+        â†“
 Query Qdrant database
-        ↓
-Lấy top-1 hoặc top-k kết quả gần nhất
-        ↓
-So sánh score với threshold
-        ↓
+        â†“
+Láº¥y top-1 hoáº·c top-k káº¿t quáº£ gáº§n nháº¥t
+        â†“
+So sÃ¡nh score vá»›i threshold
+        â†“
 Known / Unknown / Unverified
-        ↓
-Hiển thị bounding box
-        ↓
-Rule Engine kiểm tra điều kiện cảnh báo
-        ↓
-Lưu snapshot + log + warning
+        â†“
+Hiá»ƒn thá»‹ bounding box
+        â†“
+Rule Engine kiá»ƒm tra Ä‘iá»u kiá»‡n cáº£nh bÃ¡o
+        â†“
+LÆ°u snapshot + log + warning
 ```
 
 ---
 
-## 3. Kiến trúc hệ thống đề xuất
+## 3. Kiáº¿n trÃºc há»‡ thá»‘ng Ä‘á» xuáº¥t
 
 ```text
-┌───────────────────────┐
-│ Camera / RTSP / Video │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Frame Capture         │
-│ OpenCV                │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ InsightFace Detection │
-│ chạy local            │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ InsightFace Recognition│
-│ chạy local, extract emb│
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Qdrant Vector Search  │
-│ Search employee DB    │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Recognition Decision  │
-│ Known / Unknown       │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Tracking + Voting     │
-│ Reduce false alert    │
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Rule Engine           │
-│ Time + Zone + Behavior│
-└───────────┬───────────┘
-            ↓
-┌───────────────────────┐
-│ Alert + Snapshot + Log│
-└───────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Camera / RTSP / Video â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Frame Capture         â”‚
+â”‚ OpenCV                â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ InsightFace Detection â”‚
+â”‚ cháº¡y local            â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ InsightFace Recognitionâ”‚
+â”‚ cháº¡y local, extract embâ”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Qdrant Vector Search  â”‚
+â”‚ Search employee DB    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Recognition Decision  â”‚
+â”‚ Known / Unknown       â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Tracking + Voting     â”‚
+â”‚ Reduce false alert    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Rule Engine           â”‚
+â”‚ Time + Zone + Behaviorâ”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+            â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Alert + Snapshot + Logâ”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ---
 
-## 4. Các trạng thái cần phân biệt
+## 4. CÃ¡c tráº¡ng thÃ¡i cáº§n phÃ¢n biá»‡t
 
-Không nên chỉ chia thành 2 trạng thái Known / Unknown. Nên chia thành 3 trạng thái:
+KhÃ´ng nÃªn chá»‰ chia thÃ nh 2 tráº¡ng thÃ¡i Known / Unknown. NÃªn chia thÃ nh 3 tráº¡ng thÃ¡i:
 
-| Trạng thái | Ý nghĩa | Hiển thị |
+| Tráº¡ng thÃ¡i | Ã nghÄ©a | Hiá»ƒn thá»‹ |
 |---|---|---|
-| `Known` | Người đã có trong database, score vượt threshold | Khung xanh + tên |
-| `Unknown` | Có mặt rõ nhưng không khớp ai trong database | Khung đỏ + Unknown |
-| `Unverified` | Không đủ điều kiện nhận diện: mặt mờ, nhỏ, quay lưng, che mặt | Khung vàng/xám + Unverified |
+| `Known` | NgÆ°á»i Ä‘Ã£ cÃ³ trong database, score vÆ°á»£t threshold | Khung xanh + tÃªn |
+| `Unknown` | CÃ³ máº·t rÃµ nhÆ°ng khÃ´ng khá»›p ai trong database | Khung Ä‘á» + Unknown |
+| `Unverified` | KhÃ´ng Ä‘á»§ Ä‘iá»u kiá»‡n nháº­n diá»‡n: máº·t má», nhá», quay lÆ°ng, che máº·t | Khung vÃ ng/xÃ¡m + Unverified |
 
-Lý do cần có `Unverified`:
+LÃ½ do cáº§n cÃ³ `Unverified`:
 
-- Nếu không thấy rõ mặt thì không nên kết luận chắc chắn là người lạ.
-- Trạng thái này giúp giảm cảnh báo sai.
-- Có thể dùng thêm rule riêng: nếu `Unverified` vào khu vực cấm hoặc ngoài giờ thì cảnh báo mức trung bình.
+- Náº¿u khÃ´ng tháº¥y rÃµ máº·t thÃ¬ khÃ´ng nÃªn káº¿t luáº­n cháº¯c cháº¯n lÃ  ngÆ°á»i láº¡.
+- Tráº¡ng thÃ¡i nÃ y giÃºp giáº£m cáº£nh bÃ¡o sai.
+- CÃ³ thá»ƒ dÃ¹ng thÃªm rule riÃªng: náº¿u `Unverified` vÃ o khu vá»±c cáº¥m hoáº·c ngoÃ i giá» thÃ¬ cáº£nh bÃ¡o má»©c trung bÃ¬nh.
 
 ---
 
-## 5. Logic nhận diện Known / Unknown
+## 5. Logic nháº­n diá»‡n Known / Unknown
 
 ### 5.1. Input
 
-- Frame từ camera/video.
-- Bbox khuôn mặt từ InsightFace detection chạy local.
-- Face crop hoặc aligned face.
-- Embedding từ InsightFace recognition chạy local.
-- Database Qdrant chứa embedding nhân viên.
+- Frame tá»« camera/video.
+- Bbox khuÃ´n máº·t tá»« InsightFace detection cháº¡y local.
+- Face crop hoáº·c aligned face.
+- Embedding tá»« InsightFace recognition cháº¡y local.
+- Database Qdrant chá»©a embedding nhÃ¢n viÃªn.
 
 ### 5.2. Output
 
 - `status`: Known / Unknown / Unverified.
-- `name`: tên nhân viên hoặc Unknown.
-- `score`: điểm tương đồng.
-- `employee_id`: mã nhân viên nếu có.
-- `bbox`: tọa độ khuôn mặt.
-- `camera_id`: camera phát hiện.
-- `timestamp`: thời gian phát hiện.
+- `name`: tÃªn nhÃ¢n viÃªn hoáº·c Unknown.
+- `score`: Ä‘iá»ƒm tÆ°Æ¡ng Ä‘á»“ng.
+- `employee_id`: mÃ£ nhÃ¢n viÃªn náº¿u cÃ³.
+- `bbox`: tá»a Ä‘á»™ khuÃ´n máº·t.
+- `camera_id`: camera phÃ¡t hiá»‡n.
+- `timestamp`: thá»i gian phÃ¡t hiá»‡n.
 
-### 5.3. Logic cơ bản
+### 5.3. Logic cÆ¡ báº£n
 
 ```python
 if face_quality_is_low:
@@ -164,40 +164,40 @@ else:
     box_color = "red"
 ```
 
-### 5.4. Threshold ban đầu
+### 5.4. Threshold ban Ä‘áº§u
 
-Có thể thử ban đầu:
+CÃ³ thá»ƒ thá»­ ban Ä‘áº§u:
 
 ```python
-FACE_THRESHOLD = 0.55  # hoặc 0.60
+FACE_THRESHOLD = 0.55  # hoáº·c 0.60
 ```
 
-Tuy nhiên threshold không nên chọn cố định theo cảm tính. Cần test trên dữ liệu camera thật của công ty.
+Tuy nhiÃªn threshold khÃ´ng nÃªn chá»n cá»‘ Ä‘á»‹nh theo cáº£m tÃ­nh. Cáº§n test trÃªn dá»¯ liá»‡u camera tháº­t cá»§a cÃ´ng ty.
 
-Gợi ý cách chọn threshold:
+Gá»£i Ã½ cÃ¡ch chá»n threshold:
 
-| Trường hợp | Ý nghĩa |
+| TrÆ°á»ng há»£p | Ã nghÄ©a |
 |---|---|
-| Threshold thấp | Dễ nhận nhầm người lạ thành nhân viên |
-| Threshold cao | Dễ nhận nhầm nhân viên thành người lạ |
-| Threshold phù hợp | Cân bằng giữa false accept và false reject |
+| Threshold tháº¥p | Dá»… nháº­n nháº§m ngÆ°á»i láº¡ thÃ nh nhÃ¢n viÃªn |
+| Threshold cao | Dá»… nháº­n nháº§m nhÃ¢n viÃªn thÃ nh ngÆ°á»i láº¡ |
+| Threshold phÃ¹ há»£p | CÃ¢n báº±ng giá»¯a false accept vÃ  false reject |
 
-Nên thu dữ liệu test gồm:
+NÃªn thu dá»¯ liá»‡u test gá»“m:
 
-- Ảnh nhân viên từ camera thật.
-- Ảnh người ngoài không có trong database.
-- Ảnh nhân viên ở nhiều góc khác nhau.
-- Ảnh trong điều kiện thiếu sáng, ngược sáng, đi nhanh.
+- áº¢nh nhÃ¢n viÃªn tá»« camera tháº­t.
+- áº¢nh ngÆ°á»i ngoÃ i khÃ´ng cÃ³ trong database.
+- áº¢nh nhÃ¢n viÃªn á»Ÿ nhiá»u gÃ³c khÃ¡c nhau.
+- áº¢nh trong Ä‘iá»u kiá»‡n thiáº¿u sÃ¡ng, ngÆ°á»£c sÃ¡ng, Ä‘i nhanh.
 
 ---
 
-## 6. Vai trò của Qdrant
+## 6. Vai trÃ² cá»§a Qdrant
 
-Qdrant được dùng làm vector database để lưu và truy vấn embedding khuôn mặt.
+Qdrant Ä‘Æ°á»£c dÃ¹ng lÃ m vector database Ä‘á»ƒ lÆ°u vÃ  truy váº¥n embedding khuÃ´n máº·t.
 
-### 6.1. Dữ liệu trong Qdrant cần có
+### 6.1. Dá»¯ liá»‡u trong Qdrant cáº§n cÃ³
 
-Mỗi vector nên có payload dạng:
+Má»—i vector nÃªn cÃ³ payload dáº¡ng:
 
 ```json
 {
@@ -209,76 +209,76 @@ Mỗi vector nên có payload dạng:
 }
 ```
 
-### 6.2. Điều kiện bắt buộc
+### 6.2. Äiá»u kiá»‡n báº¯t buá»™c
 
-Cần đảm bảo:
+Cáº§n Ä‘áº£m báº£o:
 
-- Embedding trong Qdrant và embedding mới phải được tạo từ cùng model recognition của InsightFace.
-- Nếu đổi model recognition local, phải tạo lại embedding trong Qdrant bằng đúng model đó.
-- Cùng số chiều vector, ví dụ 512 chiều.
-- Cùng cách normalize vector.
-- Cùng metric search, ví dụ cosine similarity.
-- Payload có đủ thông tin để hiển thị tên người.
+- Embedding trong Qdrant vÃ  embedding má»›i pháº£i Ä‘Æ°á»£c táº¡o tá»« cÃ¹ng model recognition cá»§a InsightFace.
+- Náº¿u Ä‘á»•i model recognition local, pháº£i táº¡o láº¡i embedding trong Qdrant báº±ng Ä‘Ãºng model Ä‘Ã³.
+- CÃ¹ng sá»‘ chiá»u vector, vÃ­ dá»¥ 512 chiá»u.
+- CÃ¹ng cÃ¡ch normalize vector.
+- CÃ¹ng metric search, vÃ­ dá»¥ cosine similarity.
+- Payload cÃ³ Ä‘á»§ thÃ´ng tin Ä‘á»ƒ hiá»ƒn thá»‹ tÃªn ngÆ°á»i.
 
 ### 6.3. Query Qdrant
 
-Luồng query:
+Luá»“ng query:
 
 ```text
-Embedding mới
-   ↓
-Qdrant search top-1 hoặc top-5
-   ↓
-Lấy kết quả có score cao nhất
-   ↓
-So sánh với threshold
+Embedding má»›i
+   â†“
+Qdrant search top-1 hoáº·c top-5
+   â†“
+Láº¥y káº¿t quáº£ cÃ³ score cao nháº¥t
+   â†“
+So sÃ¡nh vá»›i threshold
 ```
 
-Ban đầu có thể dùng `top_k = 1`. Sau đó nếu muốn debug tốt hơn thì dùng `top_k = 5` để biết Unknown đang gần giống những ai.
+Ban Ä‘áº§u cÃ³ thá»ƒ dÃ¹ng `top_k = 1`. Sau Ä‘Ã³ náº¿u muá»‘n debug tá»‘t hÆ¡n thÃ¬ dÃ¹ng `top_k = 5` Ä‘á»ƒ biáº¿t Unknown Ä‘ang gáº§n giá»‘ng nhá»¯ng ai.
 
 ---
 
-## 7. Không cảnh báo ngay khi thấy Unknown
+## 7. KhÃ´ng cáº£nh bÃ¡o ngay khi tháº¥y Unknown
 
-Một lỗi rất thường gặp là vừa phát hiện Unknown đã cảnh báo ngay. Điều này dễ gây spam và báo sai.
+Má»™t lá»—i ráº¥t thÆ°á»ng gáº·p lÃ  vá»«a phÃ¡t hiá»‡n Unknown Ä‘Ã£ cáº£nh bÃ¡o ngay. Äiá»u nÃ y dá»… gÃ¢y spam vÃ  bÃ¡o sai.
 
-Nên chia thành 2 tầng:
+NÃªn chia thÃ nh 2 táº§ng:
 
 ```text
-Tầng 1: Unknown Detection
-Tầng 2: Suspicious Unknown Warning
+Táº§ng 1: Unknown Detection
+Táº§ng 2: Suspicious Unknown Warning
 ```
 
-Có nghĩa là:
+CÃ³ nghÄ©a lÃ :
 
-- `Unknown` thông thường: chỉ vẽ khung đỏ.
-- `Unknown + điều kiện đáng ngờ`: mới cảnh báo.
+- `Unknown` thÃ´ng thÆ°á»ng: chá»‰ váº½ khung Ä‘á».
+- `Unknown + Ä‘iá»u kiá»‡n Ä‘Ã¡ng ngá»`: má»›i cáº£nh bÃ¡o.
 
-Ví dụ:
+VÃ­ dá»¥:
 
 ```text
-Unknown xuất hiện trong giờ làm việc ở khu vực bình thường
-→ Chỉ hiển thị khung đỏ
+Unknown xuáº¥t hiá»‡n trong giá» lÃ m viá»‡c á»Ÿ khu vá»±c bÃ¬nh thÆ°á»ng
+â†’ Chá»‰ hiá»ƒn thá»‹ khung Ä‘á»
 
-Unknown xuất hiện ngoài giờ làm việc
-→ Warning
+Unknown xuáº¥t hiá»‡n ngoÃ i giá» lÃ m viá»‡c
+â†’ Warning
 
-Unknown đứng ở cổng quá lâu
-→ Warning
+Unknown Ä‘á»©ng á»Ÿ cá»•ng quÃ¡ lÃ¢u
+â†’ Warning
 
-Unknown đi vào khu vực hạn chế
-→ Warning
+Unknown Ä‘i vÃ o khu vá»±c háº¡n cháº¿
+â†’ Warning
 ```
 
 ---
 
-## 8. Rule Engine cảnh báo
+## 8. Rule Engine cáº£nh bÃ¡o
 
-Rule Engine là module quyết định khi nào cần cảnh báo.
+Rule Engine lÃ  module quyáº¿t Ä‘á»‹nh khi nÃ o cáº§n cáº£nh bÃ¡o.
 
-### 8.1. Rule 1: Người lạ xuất hiện ngoài giờ làm việc
+### 8.1. Rule 1: NgÆ°á»i láº¡ xuáº¥t hiá»‡n ngoÃ i giá» lÃ m viá»‡c
 
-Ví dụ giờ làm việc:
+VÃ­ dá»¥ giá» lÃ m viá»‡c:
 
 ```text
 08:00 - 17:30
@@ -292,10 +292,10 @@ if status == "unknown" and not is_working_hour(current_time):
     level = "high"
 ```
 
-Thông báo mẫu:
+ThÃ´ng bÃ¡o máº«u:
 
 ```text
-WARNING: Người lạ xuất hiện ngoài giờ làm việc
+WARNING: NgÆ°á»i láº¡ xuáº¥t hiá»‡n ngoÃ i giá» lÃ m viá»‡c
 Camera: gate_01
 Time: 20:42:11
 Status: Unknown
@@ -303,12 +303,12 @@ Status: Unknown
 
 ---
 
-### 8.2. Rule 2: Người lạ lảng vảng ở cổng
+### 8.2. Rule 2: NgÆ°á»i láº¡ láº£ng váº£ng á»Ÿ cá»•ng
 
-Điều kiện:
+Äiá»u kiá»‡n:
 
 ```text
-Unknown đứng trong vùng cổng hơn 10 giây
+Unknown Ä‘á»©ng trong vÃ¹ng cá»•ng hÆ¡n 10 giÃ¢y
 ```
 
 Logic:
@@ -319,20 +319,20 @@ if status == "unknown" and zone == "gate" and track_duration >= 10:
     level = "medium"
 ```
 
-Cần có tracking để biết đây là cùng một người đang đứng lâu, không phải nhiều người khác nhau.
+Cáº§n cÃ³ tracking Ä‘á»ƒ biáº¿t Ä‘Ã¢y lÃ  cÃ¹ng má»™t ngÆ°á»i Ä‘ang Ä‘á»©ng lÃ¢u, khÃ´ng pháº£i nhiá»u ngÆ°á»i khÃ¡c nhau.
 
 ---
 
-### 8.3. Rule 3: Người lạ vào khu vực hạn chế
+### 8.3. Rule 3: NgÆ°á»i láº¡ vÃ o khu vá»±c háº¡n cháº¿
 
-Ví dụ khu vực hạn chế:
+VÃ­ dá»¥ khu vá»±c háº¡n cháº¿:
 
-- Phòng server.
-- Kho hàng.
-- Khu vực tài sản.
-- Hành lang nội bộ.
-- Cửa sau.
-- Bãi xe sau giờ làm.
+- PhÃ²ng server.
+- Kho hÃ ng.
+- Khu vá»±c tÃ i sáº£n.
+- HÃ nh lang ná»™i bá»™.
+- Cá»­a sau.
+- BÃ£i xe sau giá» lÃ m.
 
 Logic:
 
@@ -344,12 +344,12 @@ if status == "unknown" and zone in RESTRICTED_ZONES:
 
 ---
 
-### 8.4. Rule 4: Người lạ xuất hiện nhiều lần trong thời gian ngắn
+### 8.4. Rule 4: NgÆ°á»i láº¡ xuáº¥t hiá»‡n nhiá»u láº§n trong thá»i gian ngáº¯n
 
-Ví dụ:
+VÃ­ dá»¥:
 
 ```text
-Unknown xuất hiện >= 3 lần trong 5 phút
+Unknown xuáº¥t hiá»‡n >= 3 láº§n trong 5 phÃºt
 ```
 
 Logic:
@@ -362,9 +362,9 @@ if unknown_count_in_5_minutes >= 3:
 
 ---
 
-### 8.5. Rule 5: Unverified nhưng xuất hiện ở vùng nhạy cảm
+### 8.5. Rule 5: Unverified nhÆ°ng xuáº¥t hiá»‡n á»Ÿ vÃ¹ng nháº¡y cáº£m
 
-Trường hợp không thấy rõ mặt nhưng người đó xuất hiện ở vùng quan trọng:
+TrÆ°á»ng há»£p khÃ´ng tháº¥y rÃµ máº·t nhÆ°ng ngÆ°á»i Ä‘Ã³ xuáº¥t hiá»‡n á»Ÿ vÃ¹ng quan trá»ng:
 
 ```python
 if status == "unverified" and zone in RESTRICTED_ZONES:
@@ -374,24 +374,24 @@ if status == "unverified" and zone in RESTRICTED_ZONES:
 
 ---
 
-## 9. Cấp độ cảnh báo đề xuất
+## 9. Cáº¥p Ä‘á»™ cáº£nh bÃ¡o Ä‘á» xuáº¥t
 
-| Điều kiện | Mức cảnh báo |
+| Äiá»u kiá»‡n | Má»©c cáº£nh bÃ¡o |
 |---|---|
-| Unknown xuất hiện bình thường trong giờ làm | Low |
-| Unknown đứng ở cổng quá 10 giây | Medium |
-| Unknown xuất hiện ngoài giờ làm việc | High |
-| Unknown vào khu vực hạn chế | Critical |
-| Unknown + ngoài giờ + khu vực hạn chế | Critical |
-| Unverified vào khu vực hạn chế | Medium |
+| Unknown xuáº¥t hiá»‡n bÃ¬nh thÆ°á»ng trong giá» lÃ m | Low |
+| Unknown Ä‘á»©ng á»Ÿ cá»•ng quÃ¡ 10 giÃ¢y | Medium |
+| Unknown xuáº¥t hiá»‡n ngoÃ i giá» lÃ m viá»‡c | High |
+| Unknown vÃ o khu vá»±c háº¡n cháº¿ | Critical |
+| Unknown + ngoÃ i giá» + khu vá»±c háº¡n cháº¿ | Critical |
+| Unverified vÃ o khu vá»±c háº¡n cháº¿ | Medium |
 
 ---
 
-## 10. Tracking và Voting
+## 10. Tracking vÃ  Voting
 
-### 10.1. Vì sao cần tracking?
+### 10.1. VÃ¬ sao cáº§n tracking?
 
-Nếu xử lý từng frame riêng lẻ, hệ thống có thể cảnh báo liên tục:
+Náº¿u xá»­ lÃ½ tá»«ng frame riÃªng láº», há»‡ thá»‘ng cÃ³ thá»ƒ cáº£nh bÃ¡o liÃªn tá»¥c:
 
 ```text
 Frame 1: Unknown
@@ -400,11 +400,11 @@ Frame 3: Unknown
 Frame 4: Unknown
 ```
 
-Điều này gây spam cảnh báo. Tracking giúp gom các frame thuộc cùng một người thành một `track_id`.
+Äiá»u nÃ y gÃ¢y spam cáº£nh bÃ¡o. Tracking giÃºp gom cÃ¡c frame thuá»™c cÃ¹ng má»™t ngÆ°á»i thÃ nh má»™t `track_id`.
 
 ### 10.2. Tracking ID
 
-Ví dụ:
+VÃ­ dá»¥:
 
 ```text
 Track ID 12:
@@ -421,31 +421,31 @@ Sau khi voting:
 Track ID 12 = Nguyen Van A
 ```
 
-### 10.3. Voting theo nhiều frame
+### 10.3. Voting theo nhiá»u frame
 
-Không nên kết luận bằng 1 frame. Nên dùng nhiều frame.
+KhÃ´ng nÃªn káº¿t luáº­n báº±ng 1 frame. NÃªn dÃ¹ng nhiá»u frame.
 
-Ví dụ:
+VÃ­ dá»¥:
 
 ```text
 Trong 30 frame:
-- 22 frame nhận là Nguyen Van A
+- 22 frame nháº­n lÃ  Nguyen Van A
 - 8 frame unknown
 
-Kết luận: Nguyen Van A
+Káº¿t luáº­n: Nguyen Van A
 ```
 
-Hoặc:
+Hoáº·c:
 
 ```text
 Trong 30 frame:
 - 25 frame unknown
-- 0 frame known đủ threshold
+- 0 frame known Ä‘á»§ threshold
 
-Kết luận: Unknown
+Káº¿t luáº­n: Unknown
 ```
 
-### 10.4. Gợi ý rule voting
+### 10.4. Gá»£i Ã½ rule voting
 
 ```python
 if known_count >= 5 and best_known_score >= FACE_THRESHOLD:
@@ -458,11 +458,11 @@ else:
 
 ---
 
-## 11. Khu vực giám sát bằng ROI / Zone
+## 11. Khu vá»±c giÃ¡m sÃ¡t báº±ng ROI / Zone
 
-Cần định nghĩa các vùng quan trọng trong camera.
+Cáº§n Ä‘á»‹nh nghÄ©a cÃ¡c vÃ¹ng quan trá»ng trong camera.
 
-Ví dụ:
+VÃ­ dá»¥:
 
 ```text
 gate_zone
@@ -473,7 +473,7 @@ parking_zone
 restricted_zone
 ```
 
-Có thể định nghĩa bằng polygon:
+CÃ³ thá»ƒ Ä‘á»‹nh nghÄ©a báº±ng polygon:
 
 ```python
 zones = {
@@ -482,35 +482,35 @@ zones = {
 }
 ```
 
-Kiểm tra người có nằm trong vùng hay không bằng điểm trung tâm bbox:
+Kiá»ƒm tra ngÆ°á»i cÃ³ náº±m trong vÃ¹ng hay khÃ´ng báº±ng Ä‘iá»ƒm trung tÃ¢m bbox:
 
 ```python
 center_x = (x1 + x2) / 2
 center_y = (y1 + y2) / 2
 ```
 
-Nếu điểm trung tâm nằm trong polygon thì xem như người đó đang ở vùng tương ứng.
+Náº¿u Ä‘iá»ƒm trung tÃ¢m náº±m trong polygon thÃ¬ xem nhÆ° ngÆ°á»i Ä‘Ã³ Ä‘ang á»Ÿ vÃ¹ng tÆ°Æ¡ng á»©ng.
 
 ---
 
-## 12. Snapshot và Log
+## 12. Snapshot vÃ  Log
 
-Khi có cảnh báo, hệ thống nên lưu:
+Khi cÃ³ cáº£nh bÃ¡o, há»‡ thá»‘ng nÃªn lÆ°u:
 
-- Ảnh full frame.
-- Ảnh crop face.
-- Ảnh crop person nếu có person detection.
-- Thời gian.
+- áº¢nh full frame.
+- áº¢nh crop face.
+- áº¢nh crop person náº¿u cÃ³ person detection.
+- Thá»i gian.
 - Camera ID.
 - Track ID.
 - Zone.
 - Status.
-- Best match gần nhất.
+- Best match gáº§n nháº¥t.
 - Best score.
-- Loại cảnh báo.
-- Mức cảnh báo.
+- Loáº¡i cáº£nh bÃ¡o.
+- Má»©c cáº£nh bÃ¡o.
 
-Ví dụ log:
+VÃ­ dá»¥ log:
 
 ```json
 {
@@ -531,44 +531,44 @@ Ví dụ log:
 
 ---
 
-## 13. Cấu trúc thư mục gợi ý
+## 13. Cáº¥u trÃºc thÆ° má»¥c gá»£i Ã½
 
 ```text
 unknown_detection_system/
-├── main.py
-├── config.py
-├── insightface_detector.py
-├── insightface_recognizer.py
-├── qdrant_service.py
-├── recognition.py
-├── tracker.py
-├── zone_manager.py
-├── rule_engine.py
-├── alert_manager.py
-├── logger_service.py
-├── utils/
-│   ├── image_utils.py
-│   ├── time_utils.py
-│   └── geometry_utils.py
-├── snapshots/
-│   ├── unknown/
-│   ├── unverified/
-│   └── warnings/
-├── logs/
-│   └── events.jsonl
-└── README.md
+â”œâ”€â”€ main.py
+â”œâ”€â”€ config.py
+â”œâ”€â”€ insightface_detector.py
+â”œâ”€â”€ insightface_recognizer.py
+â”œâ”€â”€ qdrant_service.py
+â”œâ”€â”€ recognition.py
+â”œâ”€â”€ tracker.py
+â”œâ”€â”€ zone_manager.py
+â”œâ”€â”€ rule_engine.py
+â”œâ”€â”€ alert_manager.py
+â”œâ”€â”€ logger_service.py
+â”œâ”€â”€ utils/
+â”‚   â”œâ”€â”€ image_utils.py
+â”‚   â”œâ”€â”€ time_utils.py
+â”‚   â””â”€â”€ geometry_utils.py
+â”œâ”€â”€ snapshots/
+â”‚   â”œâ”€â”€ unknown/
+â”‚   â”œâ”€â”€ unverified/
+â”‚   â””â”€â”€ warnings/
+â”œâ”€â”€ logs/
+â”‚   â””â”€â”€ events.jsonl
+â””â”€â”€ README.md
 ```
 
 ---
 
-## 14. File config đề xuất
+## 14. File config Ä‘á» xuáº¥t
 
 ```python
 # config.py
 
 INSIGHTFACE_DETECTION_MODEL = "<local-detection-model>"
 INSIGHTFACE_RECOGNITION_MODEL = "<local-recognition-model>"
-INSIGHTFACE_DEVICE = "cuda"  # hoặc "cpu" nếu máy không có GPU
+INSIGHTFACE_DEVICE = "cuda"  # hoáº·c "cpu" náº¿u mÃ¡y khÃ´ng cÃ³ GPU
 
 QDRANT_HOST = "<qdrant-ip>"
 QDRANT_PORT = 6333
@@ -596,71 +596,71 @@ RESTRICTED_ZONES = [
 
 ---
 
-## 15. Phase triển khai chi tiết
+## 15. Phase triá»ƒn khai chi tiáº¿t
 
-## Phase 0: Chuẩn bị môi trường chạy InsightFace local
+## Phase 0: Chuáº©n bá»‹ mÃ´i trÆ°á»ng cháº¡y InsightFace local
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Máy của mình chạy được model InsightFace local cho detection và recognition.
+MÃ¡y cá»§a mÃ¬nh cháº¡y Ä‘Æ°á»£c model InsightFace local cho detection vÃ  recognition.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Cài môi trường Python, OpenCV, InsightFace và runtime phù hợp.
-- Chọn backend chạy model: GPU nếu có CUDA, CPU nếu không có GPU.
-- Tải hoặc cấu hình model detection từ InsightFace.
-- Tải hoặc cấu hình model recognition từ InsightFace.
-- Chạy thử detection trên một ảnh mặt.
-- Chạy thử recognition để lấy embedding.
-- Kiểm tra Qdrant đang chạy ở đâu.
-- Kiểm tra collection trong Qdrant tên gì.
-- Kiểm tra vector size.
-- Kiểm tra metric đang dùng: cosine, dot hoặc euclidean.
-- Kiểm tra payload trong Qdrant có tên nhân viên chưa.
+- CÃ i mÃ´i trÆ°á»ng Python, OpenCV, InsightFace vÃ  runtime phÃ¹ há»£p.
+- Chá»n backend cháº¡y model: GPU náº¿u cÃ³ CUDA, CPU náº¿u khÃ´ng cÃ³ GPU.
+- Táº£i hoáº·c cáº¥u hÃ¬nh model detection tá»« InsightFace.
+- Táº£i hoáº·c cáº¥u hÃ¬nh model recognition tá»« InsightFace.
+- Cháº¡y thá»­ detection trÃªn má»™t áº£nh máº·t.
+- Cháº¡y thá»­ recognition Ä‘á»ƒ láº¥y embedding.
+- Kiá»ƒm tra Qdrant Ä‘ang cháº¡y á»Ÿ Ä‘Ã¢u.
+- Kiá»ƒm tra collection trong Qdrant tÃªn gÃ¬.
+- Kiá»ƒm tra vector size.
+- Kiá»ƒm tra metric Ä‘ang dÃ¹ng: cosine, dot hoáº·c euclidean.
+- Kiá»ƒm tra payload trong Qdrant cÃ³ tÃªn nhÃ¢n viÃªn chÆ°a.
 
 ### Output
 
-- Máy local detect được khuôn mặt.
-- Máy local extract được embedding.
-- Có thông tin Qdrant.
-- Biết collection, vector size, metric.
-- Biết payload có những trường nào.
+- MÃ¡y local detect Ä‘Æ°á»£c khuÃ´n máº·t.
+- MÃ¡y local extract Ä‘Æ°á»£c embedding.
+- CÃ³ thÃ´ng tin Qdrant.
+- Biáº¿t collection, vector size, metric.
+- Biáº¿t payload cÃ³ nhá»¯ng trÆ°á»ng nÃ o.
 
 ### Checklist
 
-- [ ] InsightFace detection chạy local thành công.
-- [ ] InsightFace recognition chạy local thành công.
-- [ ] Embedding trả về đúng chiều.
-- [ ] Kết nối được tới Qdrant.
-- [ ] Query thử một embedding thành công.
-- [ ] Lấy được tên nhân viên từ payload.
-- [ ] Biết threshold tạm thời để test.
+- [ ] InsightFace detection cháº¡y local thÃ nh cÃ´ng.
+- [ ] InsightFace recognition cháº¡y local thÃ nh cÃ´ng.
+- [ ] Embedding tráº£ vá» Ä‘Ãºng chiá»u.
+- [ ] Káº¿t ná»‘i Ä‘Æ°á»£c tá»›i Qdrant.
+- [ ] Query thá»­ má»™t embedding thÃ nh cÃ´ng.
+- [ ] Láº¥y Ä‘Æ°á»£c tÃªn nhÃ¢n viÃªn tá»« payload.
+- [ ] Biáº¿t threshold táº¡m thá»i Ä‘á»ƒ test.
 
 ---
 
-## Phase 1: Kết nối InsightFace local và Qdrant
+## Phase 1: Káº¿t ná»‘i InsightFace local vÃ  Qdrant
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Máy của mình tự detect mặt, tự extract embedding bằng InsightFace local, sau đó query database Qdrant.
+MÃ¡y cá»§a mÃ¬nh tá»± detect máº·t, tá»± extract embedding báº±ng InsightFace local, sau Ä‘Ã³ query database Qdrant.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Viết `insightface_detector.py` để detect khuôn mặt trong ảnh/frame.
-- Viết `insightface_recognizer.py` để lấy embedding từ face crop/aligned face.
-- Viết `qdrant_service.py` để query embedding.
-- Lấy top-1 hoặc top-5 match.
-- In ra kết quả match gồm:
+- Viáº¿t `insightface_detector.py` Ä‘á»ƒ detect khuÃ´n máº·t trong áº£nh/frame.
+- Viáº¿t `insightface_recognizer.py` Ä‘á»ƒ láº¥y embedding tá»« face crop/aligned face.
+- Viáº¿t `qdrant_service.py` Ä‘á»ƒ query embedding.
+- Láº¥y top-1 hoáº·c top-5 match.
+- In ra káº¿t quáº£ match gá»“m:
   - employee_id
   - name
   - score
 
 ### Output
 
-Có script test:
+CÃ³ script test:
 
 ```text
-Input: ảnh gốc
+Input: áº£nh gá»‘c
 Output:
 - Face bbox
 - Best match
@@ -671,38 +671,38 @@ Output:
 
 ### Checklist
 
-- [ ] Detect được mặt từ ảnh gốc.
-- [ ] Crop/align face đúng.
-- [ ] Extract embedding local đúng chiều.
-- [ ] Query Qdrant thành công.
-- [ ] Lấy được top result.
-- [ ] So sánh được với threshold.
+- [ ] Detect Ä‘Æ°á»£c máº·t tá»« áº£nh gá»‘c.
+- [ ] Crop/align face Ä‘Ãºng.
+- [ ] Extract embedding local Ä‘Ãºng chiá»u.
+- [ ] Query Qdrant thÃ nh cÃ´ng.
+- [ ] Láº¥y Ä‘Æ°á»£c top result.
+- [ ] So sÃ¡nh Ä‘Æ°á»£c vá»›i threshold.
 - [ ] In ra Known / Unknown.
 
 ---
 
-## Phase 2: Nhận diện Known / Unknown trên ảnh tĩnh
+## Phase 2: Nháº­n diá»‡n Known / Unknown trÃªn áº£nh tÄ©nh
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Test nhận diện người quen / người lạ trên ảnh trước khi chạy realtime.
+Test nháº­n diá»‡n ngÆ°á»i quen / ngÆ°á»i láº¡ trÃªn áº£nh trÆ°á»›c khi cháº¡y realtime.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Chuẩn bị ảnh nhân viên.
-- Chuẩn bị ảnh người lạ.
-- Viết module `recognition.py`.
-- Kiểm tra chất lượng mặt:
+- Chuáº©n bá»‹ áº£nh nhÃ¢n viÃªn.
+- Chuáº©n bá»‹ áº£nh ngÆ°á»i láº¡.
+- Viáº¿t module `recognition.py`.
+- Kiá»ƒm tra cháº¥t lÆ°á»£ng máº·t:
   - Face size.
   - Detection score.
-  - Blur nếu cần.
-- Nếu match vượt threshold thì Known.
-- Nếu không vượt threshold thì Unknown.
-- Nếu ảnh không đủ chất lượng thì Unverified.
+  - Blur náº¿u cáº§n.
+- Náº¿u match vÆ°á»£t threshold thÃ¬ Known.
+- Náº¿u khÃ´ng vÆ°á»£t threshold thÃ¬ Unknown.
+- Náº¿u áº£nh khÃ´ng Ä‘á»§ cháº¥t lÆ°á»£ng thÃ¬ Unverified.
 
 ### Output
 
-Kết quả cho mỗi ảnh:
+Káº¿t quáº£ cho má»—i áº£nh:
 
 ```text
 Image: test_001.jpg
@@ -711,7 +711,7 @@ Name: Nguyen Van A
 Score: 0.72
 ```
 
-Hoặc:
+Hoáº·c:
 
 ```text
 Image: unknown_001.jpg
@@ -722,36 +722,36 @@ Score: 0.41
 
 ### Checklist
 
-- [ ] Nhận diện ảnh nhân viên đúng.
-- [ ] Ảnh người lạ trả về Unknown.
-- [ ] Ảnh mờ/nhỏ trả về Unverified.
-- [ ] Có log kết quả test.
-- [ ] Có thống kê threshold sơ bộ.
+- [ ] Nháº­n diá»‡n áº£nh nhÃ¢n viÃªn Ä‘Ãºng.
+- [ ] áº¢nh ngÆ°á»i láº¡ tráº£ vá» Unknown.
+- [ ] áº¢nh má»/nhá» tráº£ vá» Unverified.
+- [ ] CÃ³ log káº¿t quáº£ test.
+- [ ] CÃ³ thá»‘ng kÃª threshold sÆ¡ bá»™.
 
 ---
 
-## Phase 3: Chạy realtime camera và vẽ bounding box
+## Phase 3: Cháº¡y realtime camera vÃ  váº½ bounding box
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Xử lý video/camera realtime và hiển thị kết quả.
+Xá»­ lÃ½ video/camera realtime vÃ  hiá»ƒn thá»‹ káº¿t quáº£.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Mở camera RTSP hoặc webcam bằng OpenCV.
-- Detect face trong từng frame bằng InsightFace detection local.
+- Má»Ÿ camera RTSP hoáº·c RTSP báº±ng OpenCV.
+- Detect face trong tá»«ng frame báº±ng InsightFace detection local.
 - Crop/align face.
-- Extract embedding bằng InsightFace recognition local.
+- Extract embedding báº±ng InsightFace recognition local.
 - Query Qdrant.
-- Vẽ bounding box:
-  - Known: khung xanh + tên.
-  - Unknown: khung đỏ + Unknown.
-  - Unverified: khung vàng/xám + Unverified.
-- Hiển thị score nếu cần debug.
+- Váº½ bounding box:
+  - Known: khung xanh + tÃªn.
+  - Unknown: khung Ä‘á» + Unknown.
+  - Unverified: khung vÃ ng/xÃ¡m + Unverified.
+- Hiá»ƒn thá»‹ score náº¿u cáº§n debug.
 
 ### Output
 
-Giao diện realtime có:
+Giao diá»‡n realtime cÃ³:
 
 ```text
 [Green box] Nguyen Van A - 0.72
@@ -761,32 +761,32 @@ Giao diện realtime có:
 
 ### Checklist
 
-- [ ] Camera chạy ổn định.
-- [ ] Bounding box hiển thị đúng.
-- [ ] Known hiển thị tên từ DB.
-- [ ] Unknown hiển thị khung đỏ.
-- [ ] Không chạy detection/recognition quá dày gây lag.
-- [ ] FPS ở mức chấp nhận được.
+- [ ] Camera cháº¡y á»•n Ä‘á»‹nh.
+- [ ] Bounding box hiá»ƒn thá»‹ Ä‘Ãºng.
+- [ ] Known hiá»ƒn thá»‹ tÃªn tá»« DB.
+- [ ] Unknown hiá»ƒn thá»‹ khung Ä‘á».
+- [ ] KhÃ´ng cháº¡y detection/recognition quÃ¡ dÃ y gÃ¢y lag.
+- [ ] FPS á»Ÿ má»©c cháº¥p nháº­n Ä‘Æ°á»£c.
 
 ---
 
-## Phase 4: Thêm Tracking và Voting
+## Phase 4: ThÃªm Tracking vÃ  Voting
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Giảm cảnh báo sai và tránh spam cảnh báo theo từng frame.
+Giáº£m cáº£nh bÃ¡o sai vÃ  trÃ¡nh spam cáº£nh bÃ¡o theo tá»«ng frame.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Tích hợp tracking.
-- Gán `track_id` cho mỗi người/khuôn mặt.
-- Lưu lịch sử nhận diện theo từng `track_id`.
-- Voting nhiều frame để quyết định final status.
-- Chỉ cảnh báo khi track đã ổn định.
+- TÃ­ch há»£p tracking.
+- GÃ¡n `track_id` cho má»—i ngÆ°á»i/khuÃ´n máº·t.
+- LÆ°u lá»‹ch sá»­ nháº­n diá»‡n theo tá»«ng `track_id`.
+- Voting nhiá»u frame Ä‘á»ƒ quyáº¿t Ä‘á»‹nh final status.
+- Chá»‰ cáº£nh bÃ¡o khi track Ä‘Ã£ á»•n Ä‘á»‹nh.
 
 ### Output
 
-Mỗi người trong video có một track riêng:
+Má»—i ngÆ°á»i trong video cÃ³ má»™t track riÃªng:
 
 ```text
 Track ID 12:
@@ -795,7 +795,7 @@ Name: Nguyen Van A
 Score avg: 0.68
 ```
 
-Hoặc:
+Hoáº·c:
 
 ```text
 Track ID 15:
@@ -806,30 +806,30 @@ Duration: 12 seconds
 
 ### Checklist
 
-- [ ] Có track_id cho từng người.
-- [ ] Không cảnh báo lặp liên tục mỗi frame.
-- [ ] Voting giúp giảm nhầm Known thành Unknown.
-- [ ] Track duration được tính đúng.
-- [ ] Unknown chỉ được xác nhận sau nhiều frame.
+- [ ] CÃ³ track_id cho tá»«ng ngÆ°á»i.
+- [ ] KhÃ´ng cáº£nh bÃ¡o láº·p liÃªn tá»¥c má»—i frame.
+- [ ] Voting giÃºp giáº£m nháº§m Known thÃ nh Unknown.
+- [ ] Track duration Ä‘Æ°á»£c tÃ­nh Ä‘Ãºng.
+- [ ] Unknown chá»‰ Ä‘Æ°á»£c xÃ¡c nháº­n sau nhiá»u frame.
 
 ---
 
-## Phase 5: Xây dựng Zone / ROI
+## Phase 5: XÃ¢y dá»±ng Zone / ROI
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Biết người lạ đang ở khu vực nào để áp dụng rule cảnh báo.
+Biáº¿t ngÆ°á»i láº¡ Ä‘ang á»Ÿ khu vá»±c nÃ o Ä‘á»ƒ Ã¡p dá»¥ng rule cáº£nh bÃ¡o.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Định nghĩa polygon cho từng vùng.
-- Viết `zone_manager.py`.
-- Kiểm tra bbox center có nằm trong vùng nào.
-- Gán zone cho từng track.
+- Äá»‹nh nghÄ©a polygon cho tá»«ng vÃ¹ng.
+- Viáº¿t `zone_manager.py`.
+- Kiá»ƒm tra bbox center cÃ³ náº±m trong vÃ¹ng nÃ o.
+- GÃ¡n zone cho tá»«ng track.
 
 ### Output
 
-Mỗi track có zone:
+Má»—i track cÃ³ zone:
 
 ```json
 {
@@ -842,32 +842,32 @@ Mỗi track có zone:
 
 ### Checklist
 
-- [ ] Định nghĩa được vùng cổng.
-- [ ] Định nghĩa được vùng hạn chế.
-- [ ] Detect đúng người đang ở zone nào.
-- [ ] Có thể cấu hình zone theo từng camera.
-- [ ] Có thể bật/tắt rule theo zone.
+- [ ] Äá»‹nh nghÄ©a Ä‘Æ°á»£c vÃ¹ng cá»•ng.
+- [ ] Äá»‹nh nghÄ©a Ä‘Æ°á»£c vÃ¹ng háº¡n cháº¿.
+- [ ] Detect Ä‘Ãºng ngÆ°á»i Ä‘ang á»Ÿ zone nÃ o.
+- [ ] CÃ³ thá»ƒ cáº¥u hÃ¬nh zone theo tá»«ng camera.
+- [ ] CÃ³ thá»ƒ báº­t/táº¯t rule theo zone.
 
 ---
 
-## Phase 6: Xây dựng Rule Engine cảnh báo
+## Phase 6: XÃ¢y dá»±ng Rule Engine cáº£nh bÃ¡o
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Cảnh báo khi Unknown có điều kiện đáng ngờ.
+Cáº£nh bÃ¡o khi Unknown cÃ³ Ä‘iá»u kiá»‡n Ä‘Ã¡ng ngá».
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Viết `rule_engine.py`.
-- Kiểm tra rule ngoài giờ.
-- Kiểm tra rule lảng vảng ở cổng.
-- Kiểm tra rule vào khu vực cấm.
-- Kiểm tra rule xuất hiện nhiều lần.
-- Gán warning level.
+- Viáº¿t `rule_engine.py`.
+- Kiá»ƒm tra rule ngoÃ i giá».
+- Kiá»ƒm tra rule láº£ng váº£ng á»Ÿ cá»•ng.
+- Kiá»ƒm tra rule vÃ o khu vá»±c cáº¥m.
+- Kiá»ƒm tra rule xuáº¥t hiá»‡n nhiá»u láº§n.
+- GÃ¡n warning level.
 
 ### Output
 
-Sự kiện cảnh báo:
+Sá»± kiá»‡n cáº£nh bÃ¡o:
 
 ```text
 [HIGH] Unknown person outside working hours
@@ -878,45 +878,45 @@ Time: 20:42:11
 
 ### Checklist
 
-- [ ] Unknown trong giờ làm không bị cảnh báo quá mức.
-- [ ] Unknown ngoài giờ có warning.
-- [ ] Unknown đứng lâu ở cổng có warning.
-- [ ] Unknown vào vùng cấm có warning.
-- [ ] Có phân cấp Low / Medium / High / Critical.
-- [ ] Không spam cảnh báo liên tục.
+- [ ] Unknown trong giá» lÃ m khÃ´ng bá»‹ cáº£nh bÃ¡o quÃ¡ má»©c.
+- [ ] Unknown ngoÃ i giá» cÃ³ warning.
+- [ ] Unknown Ä‘á»©ng lÃ¢u á»Ÿ cá»•ng cÃ³ warning.
+- [ ] Unknown vÃ o vÃ¹ng cáº¥m cÃ³ warning.
+- [ ] CÃ³ phÃ¢n cáº¥p Low / Medium / High / Critical.
+- [ ] KhÃ´ng spam cáº£nh bÃ¡o liÃªn tá»¥c.
 
 ---
 
-## Phase 7: Snapshot, Log và Dashboard
+## Phase 7: Snapshot, Log vÃ  Dashboard
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Lưu lại bằng chứng và hiển thị cảnh báo.
+LÆ°u láº¡i báº±ng chá»©ng vÃ  hiá»ƒn thá»‹ cáº£nh bÃ¡o.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Viết `alert_manager.py`.
-- Khi có warning:
-  - Lưu full frame.
-  - Lưu face crop.
-  - Lưu person crop nếu có.
-  - Ghi log vào JSONL/database.
-- Hiển thị danh sách cảnh báo trên dashboard.
-- Có thể gửi Telegram/Email nếu cần.
+- Viáº¿t `alert_manager.py`.
+- Khi cÃ³ warning:
+  - LÆ°u full frame.
+  - LÆ°u face crop.
+  - LÆ°u person crop náº¿u cÃ³.
+  - Ghi log vÃ o JSONL/database.
+- Hiá»ƒn thá»‹ danh sÃ¡ch cáº£nh bÃ¡o trÃªn dashboard.
+- CÃ³ thá»ƒ gá»­i Telegram/Email náº¿u cáº§n.
 
 ### Output
 
-Thư mục snapshot:
+ThÆ° má»¥c snapshot:
 
 ```text
 snapshots/
-├── unknown/
-│   └── UNK_20260519_204211_face.jpg
-└── warnings/
-    └── EVT_20260519_204211_full.jpg
+â”œâ”€â”€ unknown/
+â”‚   â””â”€â”€ UNK_20260519_204211_face.jpg
+â””â”€â”€ warnings/
+    â””â”€â”€ EVT_20260519_204211_full.jpg
 ```
 
-Log sự kiện:
+Log sá»± kiá»‡n:
 
 ```json
 {
@@ -933,58 +933,58 @@ Log sự kiện:
 
 ### Checklist
 
-- [ ] Có lưu ảnh khi warning.
-- [ ] Có log đầy đủ thông tin.
-- [ ] Có thể xem lại cảnh báo.
-- [ ] Có thể debug score và best match.
-- [ ] Có thể xuất báo cáo nếu cần.
+- [ ] CÃ³ lÆ°u áº£nh khi warning.
+- [ ] CÃ³ log Ä‘áº§y Ä‘á»§ thÃ´ng tin.
+- [ ] CÃ³ thá»ƒ xem láº¡i cáº£nh bÃ¡o.
+- [ ] CÃ³ thá»ƒ debug score vÃ  best match.
+- [ ] CÃ³ thá»ƒ xuáº¥t bÃ¡o cÃ¡o náº¿u cáº§n.
 
 ---
 
-## Phase 8: Test, đánh giá và tinh chỉnh
+## Phase 8: Test, Ä‘Ã¡nh giÃ¡ vÃ  tinh chá»‰nh
 
-### Mục tiêu
+### Má»¥c tiÃªu
 
-Đánh giá hệ thống trong môi trường thật và giảm lỗi.
+ÄÃ¡nh giÃ¡ há»‡ thá»‘ng trong mÃ´i trÆ°á»ng tháº­t vÃ  giáº£m lá»—i.
 
-### Việc cần làm
+### Viá»‡c cáº§n lÃ m
 
-- Test với nhân viên thật.
-- Test với người không có trong database.
-- Test trong giờ làm.
-- Test ngoài giờ làm.
-- Test ở cổng.
-- Test ở khu vực hạn chế.
-- Test ánh sáng yếu.
-- Test mặt nghiêng, đeo khẩu trang, đi nhanh.
-- Điều chỉnh threshold.
-- Điều chỉnh thời gian loitering.
-- Điều chỉnh rule warning.
+- Test vá»›i nhÃ¢n viÃªn tháº­t.
+- Test vá»›i ngÆ°á»i khÃ´ng cÃ³ trong database.
+- Test trong giá» lÃ m.
+- Test ngoÃ i giá» lÃ m.
+- Test á»Ÿ cá»•ng.
+- Test á»Ÿ khu vá»±c háº¡n cháº¿.
+- Test Ã¡nh sÃ¡ng yáº¿u.
+- Test máº·t nghiÃªng, Ä‘eo kháº©u trang, Ä‘i nhanh.
+- Äiá»u chá»‰nh threshold.
+- Äiá»u chá»‰nh thá»i gian loitering.
+- Äiá»u chá»‰nh rule warning.
 
-### Chỉ số đánh giá
+### Chá»‰ sá»‘ Ä‘Ã¡nh giÃ¡
 
-| Chỉ số | Ý nghĩa |
+| Chá»‰ sá»‘ | Ã nghÄ©a |
 |---|---|
-| Known accuracy | Tỉ lệ nhận đúng nhân viên |
-| Unknown detection rate | Tỉ lệ phát hiện đúng người lạ |
-| False accept | Người lạ bị nhận nhầm thành nhân viên |
-| False reject | Nhân viên bị nhận nhầm thành Unknown |
-| Warning precision | Cảnh báo có đúng không |
-| Warning spam rate | Có bị cảnh báo quá nhiều không |
-| Processing FPS | Tốc độ xử lý realtime |
+| Known accuracy | Tá»‰ lá»‡ nháº­n Ä‘Ãºng nhÃ¢n viÃªn |
+| Unknown detection rate | Tá»‰ lá»‡ phÃ¡t hiá»‡n Ä‘Ãºng ngÆ°á»i láº¡ |
+| False accept | NgÆ°á»i láº¡ bá»‹ nháº­n nháº§m thÃ nh nhÃ¢n viÃªn |
+| False reject | NhÃ¢n viÃªn bá»‹ nháº­n nháº§m thÃ nh Unknown |
+| Warning precision | Cáº£nh bÃ¡o cÃ³ Ä‘Ãºng khÃ´ng |
+| Warning spam rate | CÃ³ bá»‹ cáº£nh bÃ¡o quÃ¡ nhiá»u khÃ´ng |
+| Processing FPS | Tá»‘c Ä‘á»™ xá»­ lÃ½ realtime |
 
 ### Checklist
 
-- [ ] Test đủ nhân viên.
-- [ ] Test đủ người lạ.
-- [ ] Có bảng kết quả threshold.
-- [ ] Có thống kê lỗi.
-- [ ] Tinh chỉnh rule cảnh báo.
-- [ ] Chạy thử ổn định trong nhiều giờ.
+- [ ] Test Ä‘á»§ nhÃ¢n viÃªn.
+- [ ] Test Ä‘á»§ ngÆ°á»i láº¡.
+- [ ] CÃ³ báº£ng káº¿t quáº£ threshold.
+- [ ] CÃ³ thá»‘ng kÃª lá»—i.
+- [ ] Tinh chá»‰nh rule cáº£nh bÃ¡o.
+- [ ] Cháº¡y thá»­ á»•n Ä‘á»‹nh trong nhiá»u giá».
 
 ---
 
-## 16. Pseudocode tổng thể
+## 16. Pseudocode tá»•ng thá»ƒ
 
 ```python
 for frame in camera_stream:
@@ -1058,67 +1058,67 @@ for frame in camera_stream:
 
 ---
 
-## 17. Roadmap ngắn gọn
+## 17. Roadmap ngáº¯n gá»n
 
 ```text
-Phase 0: Chuẩn bị môi trường InsightFace local
-Phase 1: Kết nối InsightFace local + Qdrant
-Phase 2: Nhận diện Known / Unknown trên ảnh tĩnh
-Phase 3: Chạy realtime camera + bounding box
-Phase 4: Thêm tracking + voting
-Phase 5: Thêm zone / ROI
-Phase 6: Thêm rule engine cảnh báo
-Phase 7: Lưu snapshot + log + dashboard
-Phase 8: Test thực tế + tinh chỉnh threshold/rule
+Phase 0: Chuáº©n bá»‹ mÃ´i trÆ°á»ng InsightFace local
+Phase 1: Káº¿t ná»‘i InsightFace local + Qdrant
+Phase 2: Nháº­n diá»‡n Known / Unknown trÃªn áº£nh tÄ©nh
+Phase 3: Cháº¡y realtime camera + bounding box
+Phase 4: ThÃªm tracking + voting
+Phase 5: ThÃªm zone / ROI
+Phase 6: ThÃªm rule engine cáº£nh bÃ¡o
+Phase 7: LÆ°u snapshot + log + dashboard
+Phase 8: Test thá»±c táº¿ + tinh chá»‰nh threshold/rule
 ```
 
 ---
 
-## 18. Kết luận
+## 18. Káº¿t luáº­n
 
-Hướng triển khai hợp lý nhất là xây hệ thống theo mô hình:
+HÆ°á»›ng triá»ƒn khai há»£p lÃ½ nháº¥t lÃ  xÃ¢y há»‡ thá»‘ng theo mÃ´ hÃ¬nh:
 
 ```text
 InsightFace local detection + InsightFace local recognition + Qdrant DB + Unknown Detection + Rule Engine + Snapshot/Log
 ```
 
-Trong đó:
+Trong Ä‘Ã³:
 
-- Người có trong database: hiển thị khung xanh và tên.
-- Người không có trong database: hiển thị khung đỏ và Unknown.
-- Người không đủ chất lượng nhận diện: hiển thị Unverified.
-- Unknown chỉ cảnh báo khi có điều kiện đáng ngờ:
-  - Ngoài giờ làm việc.
-  - Lảng vảng ở cổng.
-  - Vào khu vực hạn chế.
-  - Xuất hiện nhiều lần.
+- NgÆ°á»i cÃ³ trong database: hiá»ƒn thá»‹ khung xanh vÃ  tÃªn.
+- NgÆ°á»i khÃ´ng cÃ³ trong database: hiá»ƒn thá»‹ khung Ä‘á» vÃ  Unknown.
+- NgÆ°á»i khÃ´ng Ä‘á»§ cháº¥t lÆ°á»£ng nháº­n diá»‡n: hiá»ƒn thá»‹ Unverified.
+- Unknown chá»‰ cáº£nh bÃ¡o khi cÃ³ Ä‘iá»u kiá»‡n Ä‘Ã¡ng ngá»:
+  - NgoÃ i giá» lÃ m viá»‡c.
+  - Láº£ng váº£ng á»Ÿ cá»•ng.
+  - VÃ o khu vá»±c háº¡n cháº¿.
+  - Xuáº¥t hiá»‡n nhiá»u láº§n.
 
-Điểm quan trọng nhất khi triển khai thực tế:
+Äiá»ƒm quan trá»ng nháº¥t khi triá»ƒn khai thá»±c táº¿:
 
-- Không cảnh báo chỉ dựa trên 1 frame.
-- Cần tracking và voting theo nhiều frame.
-- Cần chọn threshold bằng dữ liệu camera thật.
-- Cần lưu log và snapshot để debug.
-- Cần tách rõ nhận diện và cảnh báo thành hai module riêng.
+- KhÃ´ng cáº£nh bÃ¡o chá»‰ dá»±a trÃªn 1 frame.
+- Cáº§n tracking vÃ  voting theo nhiá»u frame.
+- Cáº§n chá»n threshold báº±ng dá»¯ liá»‡u camera tháº­t.
+- Cáº§n lÆ°u log vÃ  snapshot Ä‘á»ƒ debug.
+- Cáº§n tÃ¡ch rÃµ nháº­n diá»‡n vÃ  cáº£nh bÃ¡o thÃ nh hai module riÃªng.
 
 ---
 
-## 19. Plan dựng hệ thống theo từng phase
+## 19. Plan dá»±ng há»‡ thá»‘ng theo tá»«ng phase
 
-Phần này là plan triển khai thực tế để dựng hệ thống từ dữ liệu hiện có. Mục tiêu là đi từng phase nhỏ, mỗi phase có output kiểm chứng được trước khi qua phase tiếp theo.
+Pháº§n nÃ y lÃ  plan triá»ƒn khai thá»±c táº¿ Ä‘á»ƒ dá»±ng há»‡ thá»‘ng tá»« dá»¯ liá»‡u hiá»‡n cÃ³. Má»¥c tiÃªu lÃ  Ä‘i tá»«ng phase nhá», má»—i phase cÃ³ output kiá»ƒm chá»©ng Ä‘Æ°á»£c trÆ°á»›c khi qua phase tiáº¿p theo.
 
-### Dữ liệu hiện có
+### Dá»¯ liá»‡u hiá»‡n cÃ³
 
 ```text
 manifest_20260521T080719Z.json
-        ↓
-Xác nhận bộ export gồm Postgres + Qdrant
+        â†“
+XÃ¡c nháº­n bá»™ export gá»“m Postgres + Qdrant
 
 postgres_20260521T080719Z.json
-        ↓
-Database nghiệp vụ face_db
-        ↓
-Bảng employees chứa thông tin nhân viên:
+        â†“
+Database nghiá»‡p vá»¥ face_db
+        â†“
+Báº£ng employees chá»©a thÃ´ng tin nhÃ¢n viÃªn:
 - id
 - emp_code
 - name
@@ -1127,206 +1127,206 @@ Bảng employees chứa thông tin nhân viên:
 - is_active
 
 qdrant_20260521T080719Z.json
-        ↓
+        â†“
 Vector database
-        ↓
+        â†“
 Collection employee_faces:
 - vector size: 512
 - distance: Cosine
 - points_count: 44
-- payload có employee_id, emp_code, name, department, is_active
+- payload cÃ³ employee_id, emp_code, name, department, is_active
 ```
 
-### Pipeline tổng thể cần dựng
+### Pipeline tá»•ng thá»ƒ cáº§n dá»±ng
 
 ```text
 Camera / Video / Image
-        ↓
+        â†“
 Frame Reader
-        ↓
+        â†“
 InsightFace Detection local
-        ↓
+        â†“
 Face bbox + landmarks + detection score
-        ↓
+        â†“
 Face quality check
-        ↓
+        â†“
 Crop / align face
-        ↓
+        â†“
 InsightFace Recognition local
-        ↓
+        â†“
 512-d embedding
-        ↓
-Normalize embedding đúng cách
-        ↓
+        â†“
+Normalize embedding Ä‘Ãºng cÃ¡ch
+        â†“
 Qdrant search trong collection employee_faces
-        ↓
+        â†“
 Top-k candidates
-        ↓
+        â†“
 Recognition Decision
-        ↓
+        â†“
 Known / Unknown / Unverified
-        ↓
+        â†“
 Tracking + Voting theo track_id
-        ↓
+        â†“
 Zone / ROI check
-        ↓
+        â†“
 Rule Engine
-        ↓
+        â†“
 Alert / Snapshot / Log
 ```
 
-### Phase 0: Khóa schema và dữ liệu nền
+### Phase 0: KhÃ³a schema vÃ  dá»¯ liá»‡u ná»n
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Hiểu chắc dữ liệu Postgres, Qdrant và manifest trước khi viết pipeline xử lý ảnh.
+Hiá»ƒu cháº¯c dá»¯ liá»‡u Postgres, Qdrant vÃ  manifest trÆ°á»›c khi viáº¿t pipeline xá»­ lÃ½ áº£nh.
 
-#### Việc cần làm
+#### Viá»‡c cáº§n lÃ m
 
-- Đọc `manifest_20260521T080719Z.json` để xác nhận bộ export.
-- Đọc schema Postgres, tập trung trước vào bảng `employees`.
-- Đọc schema Qdrant, tập trung trước vào collection `employee_faces`.
-- Xác nhận mapping giữa Qdrant payload và Postgres:
-  - `payload.employee_id` ↔ `employees.id`
-  - `payload.emp_code` ↔ `employees.emp_code`
-  - `payload.name` ↔ `employees.name`
-- Xác nhận vector size là `512` và distance là `Cosine`.
-- Xác nhận chỉ dùng nhân viên `is_active = true` khi nhận diện.
+- Äá»c `manifest_20260521T080719Z.json` Ä‘á»ƒ xÃ¡c nháº­n bá»™ export.
+- Äá»c schema Postgres, táº­p trung trÆ°á»›c vÃ o báº£ng `employees`.
+- Äá»c schema Qdrant, táº­p trung trÆ°á»›c vÃ o collection `employee_faces`.
+- XÃ¡c nháº­n mapping giá»¯a Qdrant payload vÃ  Postgres:
+  - `payload.employee_id` â†” `employees.id`
+  - `payload.emp_code` â†” `employees.emp_code`
+  - `payload.name` â†” `employees.name`
+- XÃ¡c nháº­n vector size lÃ  `512` vÃ  distance lÃ  `Cosine`.
+- XÃ¡c nháº­n chá»‰ dÃ¹ng nhÃ¢n viÃªn `is_active = true` khi nháº­n diá»‡n.
 
-#### Output cần có
+#### Output cáº§n cÃ³
 
 ```text
 Data contract:
-- employee_id lấy từ Qdrant payload
-- name lấy từ Qdrant payload hoặc join Postgres employees
-- vector size bắt buộc 512
-- metric bắt buộc Cosine
+- employee_id láº¥y tá»« Qdrant payload
+- name láº¥y tá»« Qdrant payload hoáº·c join Postgres employees
+- vector size báº¯t buá»™c 512
+- metric báº¯t buá»™c Cosine
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Biết collection Qdrant chính xác: `employee_faces`.
-- [ ] Biết bảng Postgres chính xác: `employees`.
-- [ ] Biết key mapping giữa Qdrant và Postgres.
-- [ ] Không còn mơ hồ embedding mới phải có shape bao nhiêu.
+- [ ] Biáº¿t collection Qdrant chÃ­nh xÃ¡c: `employee_faces`.
+- [ ] Biáº¿t báº£ng Postgres chÃ­nh xÃ¡c: `employees`.
+- [ ] Biáº¿t key mapping giá»¯a Qdrant vÃ  Postgres.
+- [ ] KhÃ´ng cÃ²n mÆ¡ há»“ embedding má»›i pháº£i cÃ³ shape bao nhiÃªu.
 
 ---
 
-### Phase 1: Dựng project skeleton tối thiểu
+### Phase 1: Dá»±ng project skeleton tá»‘i thiá»ƒu
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Tạo bộ khung code nhỏ, chưa xử lý realtime, chỉ đủ để test từng module độc lập.
+Táº¡o bá»™ khung code nhá», chÆ°a xá»­ lÃ½ realtime, chá»‰ Ä‘á»§ Ä‘á»ƒ test tá»«ng module Ä‘á»™c láº­p.
 
-#### Cấu trúc đề xuất
+#### Cáº¥u trÃºc Ä‘á» xuáº¥t
 
 ```text
 unknown_detection_system/
-├── main.py
-├── config.py
-├── data_contract.py
-├── insightface_detector.py
-├── insightface_recognizer.py
-├── face_pipeline.py
-├── qdrant_service.py
-├── postgres_service.py
-├── recognition_decision.py
-├── tests_manual/
-│   ├── test_qdrant_search.py
-│   ├── test_postgres_lookup.py
-│   ├── test_detect_image.py
-│   └── test_recognize_image.py
-└── outputs/
-    ├── debug_faces/
-    └── logs/
+â”œâ”€â”€ main.py
+â”œâ”€â”€ config.py
+â”œâ”€â”€ data_contract.py
+â”œâ”€â”€ insightface_detector.py
+â”œâ”€â”€ insightface_recognizer.py
+â”œâ”€â”€ face_pipeline.py
+â”œâ”€â”€ qdrant_service.py
+â”œâ”€â”€ postgres_service.py
+â”œâ”€â”€ recognition_decision.py
+â”œâ”€â”€ tests_manual/
+â”‚   â”œâ”€â”€ test_qdrant_search.py
+â”‚   â”œâ”€â”€ test_postgres_lookup.py
+â”‚   â”œâ”€â”€ test_detect_image.py
+â”‚   â””â”€â”€ test_recognize_image.py
+â””â”€â”€ outputs/
+    â”œâ”€â”€ debug_faces/
+    â””â”€â”€ logs/
 ```
 
-#### Pipeline trong phase này
+#### Pipeline trong phase nÃ y
 
 ```text
 Config
-  ↓
+  â†“
 Load Qdrant/Postgres connection info
-  ↓
+  â†“
 Load InsightFace model config
-  ↓
-Chạy từng script test độc lập
+  â†“
+Cháº¡y tá»«ng script test Ä‘á»™c láº­p
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Có `config.py` chứa tên collection, threshold, device, model path/name.
-- [ ] Có module Qdrant service nhưng chỉ search thử, chưa nối camera.
-- [ ] Có module Postgres service nhưng chỉ lookup nhân viên, chưa ghi log.
-- [ ] Có module detector/recognizer nhưng chưa realtime.
+- [ ] CÃ³ `config.py` chá»©a tÃªn collection, threshold, device, model path/name.
+- [ ] CÃ³ module Qdrant service nhÆ°ng chá»‰ search thá»­, chÆ°a ná»‘i camera.
+- [ ] CÃ³ module Postgres service nhÆ°ng chá»‰ lookup nhÃ¢n viÃªn, chÆ°a ghi log.
+- [ ] CÃ³ module detector/recognizer nhÆ°ng chÆ°a realtime.
 
 ---
 
-### Phase 2: Kết nối và kiểm thử Qdrant/Postgres trước
+### Phase 2: Káº¿t ná»‘i vÃ  kiá»ƒm thá»­ Qdrant/Postgres trÆ°á»›c
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Đảm bảo phần DB hoạt động đúng trước khi đụng model ảnh.
+Äáº£m báº£o pháº§n DB hoáº¡t Ä‘á»™ng Ä‘Ãºng trÆ°á»›c khi Ä‘á»¥ng model áº£nh.
 
-#### Pipeline kiểm thử
+#### Pipeline kiá»ƒm thá»­
 
 ```text
-Lấy 1 vector có sẵn từ qdrant export
-        ↓
-Search lại vào Qdrant collection employee_faces
-        ↓
-Nhận top-k candidates
-        ↓
-Lấy employee_id / emp_code / name từ payload
-        ↓
-Lookup Postgres employees nếu cần bổ sung thông tin
-        ↓
-In kết quả kiểm chứng
+Láº¥y 1 vector cÃ³ sáºµn tá»« qdrant export
+        â†“
+Search láº¡i vÃ o Qdrant collection employee_faces
+        â†“
+Nháº­n top-k candidates
+        â†“
+Láº¥y employee_id / emp_code / name tá»« payload
+        â†“
+Lookup Postgres employees náº¿u cáº§n bá»• sung thÃ´ng tin
+        â†“
+In káº¿t quáº£ kiá»ƒm chá»©ng
 ```
 
-#### Output mong muốn
+#### Output mong muá»‘n
 
 ```text
 Query vector id: 7
 Top 1:
 - employee_id: 7
 - emp_code: NV011
-- name: Hoàng Mạnh Tiến
-- score: gần 1.0 nếu search bằng chính vector gốc
+- name: HoÃ ng Máº¡nh Tiáº¿n
+- score: gáº§n 1.0 náº¿u search báº±ng chÃ­nh vector gá»‘c
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Query Qdrant thành công.
-- [ ] Top-1 trả về đúng nhân viên khi dùng vector gốc.
-- [ ] Payload có đủ `employee_id`, `emp_code`, `name`.
-- [ ] Lookup Postgres theo `employee_id` thành công nếu cần.
+- [ ] Query Qdrant thÃ nh cÃ´ng.
+- [ ] Top-1 tráº£ vá» Ä‘Ãºng nhÃ¢n viÃªn khi dÃ¹ng vector gá»‘c.
+- [ ] Payload cÃ³ Ä‘á»§ `employee_id`, `emp_code`, `name`.
+- [ ] Lookup Postgres theo `employee_id` thÃ nh cÃ´ng náº¿u cáº§n.
 
 ---
 
-### Phase 3: Chạy InsightFace detection local trên ảnh tĩnh
+### Phase 3: Cháº¡y InsightFace detection local trÃªn áº£nh tÄ©nh
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Máy local detect được khuôn mặt ổn định trước khi recognition.
+MÃ¡y local detect Ä‘Æ°á»£c khuÃ´n máº·t á»•n Ä‘á»‹nh trÆ°á»›c khi recognition.
 
 #### Pipeline
 
 ```text
 Input image
-        ↓
+        â†“
 OpenCV read image
-        ↓
+        â†“
 InsightFace detection local
-        ↓
+        â†“
 List face bbox + landmarks + det_score
-        ↓
+        â†“
 Filter theo MIN_DETECTION_SCORE, MIN_FACE_WIDTH, MIN_FACE_HEIGHT
-        ↓
-Save ảnh debug có bbox
+        â†“
+Save áº£nh debug cÃ³ bbox
 ```
 
-#### Output mong muốn
+#### Output mong muá»‘n
 
 ```text
 Image: test_employee.jpg
@@ -1337,86 +1337,86 @@ Face 1:
 - quality: pass
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Detect được mặt trên ảnh nhân viên rõ.
-- [ ] Không nhận mặt quá nhỏ/mờ nếu dưới ngưỡng.
-- [ ] Lưu được ảnh debug bbox để nhìn bằng mắt.
-- [ ] Biết FPS detection tạm thời trên máy local.
+- [ ] Detect Ä‘Æ°á»£c máº·t trÃªn áº£nh nhÃ¢n viÃªn rÃµ.
+- [ ] KhÃ´ng nháº­n máº·t quÃ¡ nhá»/má» náº¿u dÆ°á»›i ngÆ°á»¡ng.
+- [ ] LÆ°u Ä‘Æ°á»£c áº£nh debug bbox Ä‘á»ƒ nhÃ¬n báº±ng máº¯t.
+- [ ] Biáº¿t FPS detection táº¡m thá»i trÃªn mÃ¡y local.
 
 ---
 
-### Phase 4: Chạy InsightFace recognition local và kiểm tra embedding
+### Phase 4: Cháº¡y InsightFace recognition local vÃ  kiá»ƒm tra embedding
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Từ bbox đã detect, extract được embedding 512 chiều đúng chuẩn.
+Tá»« bbox Ä‘Ã£ detect, extract Ä‘Æ°á»£c embedding 512 chiá»u Ä‘Ãºng chuáº©n.
 
 #### Pipeline
 
 ```text
 Input image
-        ↓
+        â†“
 Detection
-        ↓
+        â†“
 Landmarks
-        ↓
+        â†“
 Align face
-        ↓
+        â†“
 Recognition model local
-        ↓
+        â†“
 Embedding 512-d
-        ↓
+        â†“
 Normalize embedding
-        ↓
-Kiểm tra shape + norm
+        â†“
+Kiá»ƒm tra shape + norm
 ```
 
-#### Output mong muốn
+#### Output mong muá»‘n
 
 ```text
 Embedding shape: (512,)
-Embedding norm: ~1.0 nếu đã normalize
+Embedding norm: ~1.0 náº¿u Ä‘Ã£ normalize
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Extract được embedding từ ảnh rõ mặt.
-- [ ] Embedding có đúng 512 chiều.
-- [ ] Cách normalize thống nhất với dữ liệu trong Qdrant.
-- [ ] Nếu embedding search sai hoàn toàn, dừng lại kiểm tra model recognition có trùng model tạo DB không.
+- [ ] Extract Ä‘Æ°á»£c embedding tá»« áº£nh rÃµ máº·t.
+- [ ] Embedding cÃ³ Ä‘Ãºng 512 chiá»u.
+- [ ] CÃ¡ch normalize thá»‘ng nháº¥t vá»›i dá»¯ liá»‡u trong Qdrant.
+- [ ] Náº¿u embedding search sai hoÃ n toÃ n, dá»«ng láº¡i kiá»ƒm tra model recognition cÃ³ trÃ¹ng model táº¡o DB khÃ´ng.
 
 ---
 
-### Phase 5: Nối recognition local với Qdrant để phân loại Known/Unknown
+### Phase 5: Ná»‘i recognition local vá»›i Qdrant Ä‘á»ƒ phÃ¢n loáº¡i Known/Unknown
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Ảnh tĩnh đi hết pipeline từ ảnh gốc đến Known/Unknown.
+áº¢nh tÄ©nh Ä‘i háº¿t pipeline tá»« áº£nh gá»‘c Ä‘áº¿n Known/Unknown.
 
 #### Pipeline
 
 ```text
 Input image
-        ↓
+        â†“
 Detect face
-        ↓
+        â†“
 Quality check
-        ↓
+        â†“
 Align face
-        ↓
+        â†“
 Extract embedding
-        ↓
+        â†“
 Qdrant search top_k=5
-        ↓
+        â†“
 Best score
-        ↓
+        â†“
 Compare FACE_THRESHOLD
-        ↓
+        â†“
 Known / Unknown / Unverified
 ```
 
-#### Logic quyết định
+#### Logic quyáº¿t Ä‘á»‹nh
 
 ```python
 if face_quality_is_low:
@@ -1427,7 +1427,7 @@ else:
     status = "unknown"
 ```
 
-#### Output mong muốn
+#### Output mong muá»‘n
 
 ```text
 Image: sample.jpg
@@ -1441,80 +1441,80 @@ Best candidates:
 3. Le Van C - 0.39
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Ảnh nhân viên trong DB có thể ra Known.
-- [ ] Ảnh người ngoài DB có thể ra Unknown.
-- [ ] Ảnh mờ/nhỏ ra Unverified.
-- [ ] Có log top-k để debug threshold.
+- [ ] áº¢nh nhÃ¢n viÃªn trong DB cÃ³ thá»ƒ ra Known.
+- [ ] áº¢nh ngÆ°á»i ngoÃ i DB cÃ³ thá»ƒ ra Unknown.
+- [ ] áº¢nh má»/nhá» ra Unverified.
+- [ ] CÃ³ log top-k Ä‘á»ƒ debug threshold.
 
 ---
 
-### Phase 6: Chạy video/camera nhưng chưa cảnh báo
+### Phase 6: Cháº¡y video/camera nhÆ°ng chÆ°a cáº£nh bÃ¡o
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Đưa pipeline ảnh tĩnh vào video realtime, chỉ vẽ bbox và label, chưa Rule Engine.
+ÄÆ°a pipeline áº£nh tÄ©nh vÃ o video realtime, chá»‰ váº½ bbox vÃ  label, chÆ°a Rule Engine.
 
 #### Pipeline
 
 ```text
 Camera / video file
-        ↓
+        â†“
 Read frame
-        ↓
-Skip frame nếu cần để giảm lag
-        ↓
+        â†“
+Skip frame náº¿u cáº§n Ä‘á»ƒ giáº£m lag
+        â†“
 Detect faces
-        ↓
-Recognition theo từng face đủ chất lượng
-        ↓
+        â†“
+Recognition theo tá»«ng face Ä‘á»§ cháº¥t lÆ°á»£ng
+        â†“
 Qdrant search
-        ↓
+        â†“
 Draw bbox:
-- Known: xanh + tên
-- Unknown: đỏ + Unknown
-- Unverified: vàng/xám + Unverified
-        ↓
+- Known: xanh + tÃªn
+- Unknown: Ä‘á» + Unknown
+- Unverified: vÃ ng/xÃ¡m + Unverified
+        â†“
 Show frame / save debug video
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Camera hoặc video chạy ổn định.
-- [ ] Không crash khi không có mặt.
-- [ ] Không lag quá mức do chạy recognition mỗi frame.
-- [ ] Có thể cấu hình xử lý mỗi N frame.
-- [ ] Label và màu bbox đúng.
+- [ ] Camera hoáº·c video cháº¡y á»•n Ä‘á»‹nh.
+- [ ] KhÃ´ng crash khi khÃ´ng cÃ³ máº·t.
+- [ ] KhÃ´ng lag quÃ¡ má»©c do cháº¡y recognition má»—i frame.
+- [ ] CÃ³ thá»ƒ cáº¥u hÃ¬nh xá»­ lÃ½ má»—i N frame.
+- [ ] Label vÃ  mÃ u bbox Ä‘Ãºng.
 
 ---
 
-### Phase 7: Thêm tracking và voting
+### Phase 7: ThÃªm tracking vÃ  voting
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Không kết luận người lạ dựa trên một frame đơn lẻ.
+KhÃ´ng káº¿t luáº­n ngÆ°á»i láº¡ dá»±a trÃªn má»™t frame Ä‘Æ¡n láº».
 
 #### Pipeline
 
 ```text
 Frame detections
-        ↓
+        â†“
 Tracker assign track_id
-        ↓
-Lưu recognition history theo track_id
-        ↓
-Voting nhiều frame
-        ↓
+        â†“
+LÆ°u recognition history theo track_id
+        â†“
+Voting nhiá»u frame
+        â†“
 Final status theo track:
 - known
 - unknown
 - unverified
-        ↓
+        â†“
 Draw stable label
 ```
 
-#### Rule voting ban đầu
+#### Rule voting ban Ä‘áº§u
 
 ```python
 if known_count >= 5 and best_known_score >= FACE_THRESHOLD:
@@ -1525,110 +1525,110 @@ else:
     final_status = "unverified"
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Mỗi người có `track_id` ổn định.
-- [ ] Không nhấp nháy Known/Unknown liên tục.
-- [ ] Unknown chỉ được xác nhận sau nhiều frame.
-- [ ] Có duration theo track.
+- [ ] Má»—i ngÆ°á»i cÃ³ `track_id` á»•n Ä‘á»‹nh.
+- [ ] KhÃ´ng nháº¥p nhÃ¡y Known/Unknown liÃªn tá»¥c.
+- [ ] Unknown chá»‰ Ä‘Æ°á»£c xÃ¡c nháº­n sau nhiá»u frame.
+- [ ] CÃ³ duration theo track.
 
 ---
 
-### Phase 8: Thêm Zone / ROI
+### Phase 8: ThÃªm Zone / ROI
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Biết người lạ đang ở khu vực nào để phục vụ cảnh báo.
+Biáº¿t ngÆ°á»i láº¡ Ä‘ang á»Ÿ khu vá»±c nÃ o Ä‘á»ƒ phá»¥c vá»¥ cáº£nh bÃ¡o.
 
 #### Pipeline
 
 ```text
 Track bbox
-        ↓
-Tính center point hoặc foot point
-        ↓
-Check point nằm trong polygon nào
-        ↓
-Gán zone cho track
-        ↓
-Đưa zone vào Rule Engine sau này
+        â†“
+TÃ­nh center point hoáº·c foot point
+        â†“
+Check point náº±m trong polygon nÃ o
+        â†“
+GÃ¡n zone cho track
+        â†“
+ÄÆ°a zone vÃ o Rule Engine sau nÃ y
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Cấu hình được zone theo camera.
-- [ ] Vẽ được polygon zone lên frame debug.
-- [ ] Track được gán đúng zone.
-- [ ] Có zone mặc định là `none` nếu không nằm trong vùng nào.
+- [ ] Cáº¥u hÃ¬nh Ä‘Æ°á»£c zone theo camera.
+- [ ] Váº½ Ä‘Æ°á»£c polygon zone lÃªn frame debug.
+- [ ] Track Ä‘Æ°á»£c gÃ¡n Ä‘Ãºng zone.
+- [ ] CÃ³ zone máº·c Ä‘á»‹nh lÃ  `none` náº¿u khÃ´ng náº±m trong vÃ¹ng nÃ o.
 
 ---
 
-### Phase 9: Thêm Rule Engine cảnh báo
+### Phase 9: ThÃªm Rule Engine cáº£nh bÃ¡o
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Chỉ cảnh báo khi Unknown có điều kiện đáng ngờ, không spam khi vừa thấy Unknown.
+Chá»‰ cáº£nh bÃ¡o khi Unknown cÃ³ Ä‘iá»u kiá»‡n Ä‘Ã¡ng ngá», khÃ´ng spam khi vá»«a tháº¥y Unknown.
 
 #### Pipeline
 
 ```text
 Final track status
-        ↓
+        â†“
 Track duration
-        ↓
+        â†“
 Zone
-        ↓
+        â†“
 Current time
-        ↓
+        â†“
 Rule Engine
-        ↓
-Warning hoặc no warning
+        â†“
+Warning hoáº·c no warning
 ```
 
-#### Rule ban đầu
+#### Rule ban Ä‘áº§u
 
 ```text
-Rule 1: Unknown ngoài giờ làm việc → High
-Rule 2: Unknown đứng ở cổng quá N giây → Medium
-Rule 3: Unknown vào restricted zone → Critical
-Rule 4: Unknown xuất hiện nhiều lần trong M phút → Medium
-Rule 5: Unverified vào restricted zone → Medium
+Rule 1: Unknown ngoÃ i giá» lÃ m viá»‡c â†’ High
+Rule 2: Unknown Ä‘á»©ng á»Ÿ cá»•ng quÃ¡ N giÃ¢y â†’ Medium
+Rule 3: Unknown vÃ o restricted zone â†’ Critical
+Rule 4: Unknown xuáº¥t hiá»‡n nhiá»u láº§n trong M phÃºt â†’ Medium
+Rule 5: Unverified vÃ o restricted zone â†’ Medium
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Unknown bình thường trong giờ làm không spam cảnh báo.
-- [ ] Unknown ngoài giờ có warning.
-- [ ] Unknown ở vùng cấm có warning.
-- [ ] Có cooldown theo `track_id` và `warning_type`.
+- [ ] Unknown bÃ¬nh thÆ°á»ng trong giá» lÃ m khÃ´ng spam cáº£nh bÃ¡o.
+- [ ] Unknown ngoÃ i giá» cÃ³ warning.
+- [ ] Unknown á»Ÿ vÃ¹ng cáº¥m cÃ³ warning.
+- [ ] CÃ³ cooldown theo `track_id` vÃ  `warning_type`.
 
 ---
 
-### Phase 10: Snapshot, log và tích hợp Postgres
+### Phase 10: Snapshot, log vÃ  tÃ­ch há»£p Postgres
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Khi có warning, lưu bằng chứng để xem lại và debug.
+Khi cÃ³ warning, lÆ°u báº±ng chá»©ng Ä‘á»ƒ xem láº¡i vÃ  debug.
 
 #### Pipeline
 
 ```text
 Warning event
-        ↓
+        â†“
 Generate event_id
-        ↓
+        â†“
 Save full frame
-        ↓
+        â†“
 Save face crop
-        ↓
+        â†“
 Build event payload
-        ↓
-Write JSONL log trước
-        ↓
-Sau khi ổn định mới ghi Postgres table riêng nếu cần
+        â†“
+Write JSONL log trÆ°á»›c
+        â†“
+Sau khi á»•n Ä‘á»‹nh má»›i ghi Postgres table riÃªng náº¿u cáº§n
 ```
 
-#### Dữ liệu log tối thiểu
+#### Dá»¯ liá»‡u log tá»‘i thiá»ƒu
 
 ```json
 {
@@ -1638,7 +1638,7 @@ Sau khi ổn định mới ghi Postgres table riêng nếu cần
   "status": "unknown",
   "zone": "gate",
   "best_match_employee_id": 7,
-  "best_match_name": "Hoàng Mạnh Tiến",
+  "best_match_name": "HoÃ ng Máº¡nh Tiáº¿n",
   "best_score": 0.38,
   "warning_type": "unknown_outside_working_hours",
   "warning_level": "high",
@@ -1647,40 +1647,40 @@ Sau khi ổn định mới ghi Postgres table riêng nếu cần
 }
 ```
 
-#### Điều kiện qua phase
+#### Äiá»u kiá»‡n qua phase
 
-- [ ] Có snapshot full frame.
-- [ ] Có snapshot face crop.
-- [ ] Có JSONL log đọc lại được.
-- [ ] Không ghi Postgres trực tiếp cho đến khi schema event ổn định.
+- [ ] CÃ³ snapshot full frame.
+- [ ] CÃ³ snapshot face crop.
+- [ ] CÃ³ JSONL log Ä‘á»c láº¡i Ä‘Æ°á»£c.
+- [ ] KhÃ´ng ghi Postgres trá»±c tiáº¿p cho Ä‘áº¿n khi schema event á»•n Ä‘á»‹nh.
 
 ---
 
-### Phase 11: Test thực tế và khóa threshold
+### Phase 11: Test thá»±c táº¿ vÃ  khÃ³a threshold
 
-#### Mục tiêu
+#### Má»¥c tiÃªu
 
-Chọn threshold và rule bằng dữ liệu camera thật, không chọn theo cảm tính.
+Chá»n threshold vÃ  rule báº±ng dá»¯ liá»‡u camera tháº­t, khÃ´ng chá»n theo cáº£m tÃ­nh.
 
-#### Pipeline đánh giá
+#### Pipeline Ä‘Ã¡nh giÃ¡
 
 ```text
-Tập ảnh/video nhân viên
-        ↓
-Tập ảnh/video người lạ
-        ↓
-Chạy pipeline batch
-        ↓
+Táº­p áº£nh/video nhÃ¢n viÃªn
+        â†“
+Táº­p áº£nh/video ngÆ°á»i láº¡
+        â†“
+Cháº¡y pipeline batch
+        â†“
 Ghi score, status, best candidate
-        ↓
-Tính false accept / false reject
-        ↓
-Điều chỉnh FACE_THRESHOLD
-        ↓
-Chạy lại video realtime
+        â†“
+TÃ­nh false accept / false reject
+        â†“
+Äiá»u chá»‰nh FACE_THRESHOLD
+        â†“
+Cháº¡y láº¡i video realtime
 ```
 
-#### Chỉ số cần theo dõi
+#### Chá»‰ sá»‘ cáº§n theo dÃµi
 
 ```text
 Known accuracy
@@ -1692,25 +1692,25 @@ Warning spam rate
 Processing FPS
 ```
 
-#### Điều kiện hoàn tất bản dựng đầu tiên
+#### Äiá»u kiá»‡n hoÃ n táº¥t báº£n dá»±ng Ä‘áº§u tiÃªn
 
-- [ ] Có threshold tạm ổn trên dữ liệu camera thật.
-- [ ] FPS đủ dùng trên máy local.
-- [ ] Warning không spam.
-- [ ] Snapshot/log đủ để truy vết lỗi.
-- [ ] Biết rõ các case yếu: thiếu sáng, mặt nghiêng, khẩu trang, motion blur.
+- [ ] CÃ³ threshold táº¡m á»•n trÃªn dá»¯ liá»‡u camera tháº­t.
+- [ ] FPS Ä‘á»§ dÃ¹ng trÃªn mÃ¡y local.
+- [ ] Warning khÃ´ng spam.
+- [ ] Snapshot/log Ä‘á»§ Ä‘á»ƒ truy váº¿t lá»—i.
+- [ ] Biáº¿t rÃµ cÃ¡c case yáº¿u: thiáº¿u sÃ¡ng, máº·t nghiÃªng, kháº©u trang, motion blur.
 
 ---
 
-### Thứ tự làm ngay từ bây giờ
+### Thá»© tá»± lÃ m ngay tá»« bÃ¢y giá»
 
 ```text
-1. Phase 0: Khóa schema Qdrant/Postgres/manifest.
-2. Phase 1: Dựng skeleton project tối thiểu.
-3. Phase 2: Test Qdrant/Postgres bằng vector có sẵn.
-4. Phase 3: Test InsightFace detection local trên ảnh tĩnh.
-5. Phase 4: Test InsightFace recognition local và embedding 512 chiều.
-6. Phase 5: Nối ảnh tĩnh → Known/Unknown.
+1. Phase 0: KhÃ³a schema Qdrant/Postgres/manifest.
+2. Phase 1: Dá»±ng skeleton project tá»‘i thiá»ƒu.
+3. Phase 2: Test Qdrant/Postgres báº±ng vector cÃ³ sáºµn.
+4. Phase 3: Test InsightFace detection local trÃªn áº£nh tÄ©nh.
+5. Phase 4: Test InsightFace recognition local vÃ  embedding 512 chiá»u.
+6. Phase 5: Ná»‘i áº£nh tÄ©nh â†’ Known/Unknown.
 ```
 
-Không nên nhảy thẳng vào realtime camera trước khi Phase 2 đến Phase 5 chạy ổn, vì nếu kết quả sai sẽ rất khó biết lỗi nằm ở model, embedding, threshold hay database.
+KhÃ´ng nÃªn nháº£y tháº³ng vÃ o realtime camera trÆ°á»›c khi Phase 2 Ä‘áº¿n Phase 5 cháº¡y á»•n, vÃ¬ náº¿u káº¿t quáº£ sai sáº½ ráº¥t khÃ³ biáº¿t lá»—i náº±m á»Ÿ model, embedding, threshold hay database.

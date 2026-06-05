@@ -1,0 +1,112 @@
+groups:
+  - name: unknown-detection-operational
+    rules:
+      - alert: BackendDown
+        expr: up{job="unknown-detection-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: backend
+        annotations:
+          summary: Backend metrics target is down
+          description: Prometheus cannot scrape the backend /metrics endpoint for more than 1 minute.
+
+      - alert: CameraWorkerOffline
+        expr: unknown_detection_camera_worker_running == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: camera-worker
+        annotations:
+          summary: Camera worker offline for {{ $labels.camera_id }}
+          description: Camera {{ $labels.camera_id }} has not reported a running worker state for more than 2 minutes.
+
+      - alert: CameraWorkerStale
+        expr: unknown_detection_camera_last_seen_age_seconds > 120
+        for: 1m
+        labels:
+          severity: critical
+          component: camera-worker
+        annotations:
+          summary: Camera worker heartbeat stale for {{ $labels.camera_id }}
+          description: Camera {{ $labels.camera_id }} has a worker heartbeat older than 120 seconds.
+
+      - alert: RedisCameraFrameStale
+        expr: unknown_detection_camera_redis_frame_age_seconds > 10
+        for: 1m
+        labels:
+          severity: warning
+          component: redis-stream
+        annotations:
+          summary: Redis camera frame stale for {{ $labels.camera_id }}
+          description: Latest Redis frame metadata for camera {{ $labels.camera_id }} is older than 10 seconds.
+
+      - alert: RedisCameraFrameMissing
+        expr: unknown_detection_camera_redis_frame_available{type=~"raw|annotated|meta"} == 0
+        for: 1m
+        labels:
+          severity: warning
+          component: redis-stream
+        annotations:
+          summary: Redis camera frame missing for {{ $labels.camera_id }}
+          description: Latest {{ $labels.type }} frame key for camera {{ $labels.camera_id }} has been missing for more than 1 minute.
+
+      - alert: HighAiLatency
+        expr: max_over_time(unknown_detection_camera_ai_latency_ms[5m]) > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: ai-worker
+        annotations:
+          summary: High AI latency for {{ $labels.camera_id }}
+          description: Camera {{ $labels.camera_id }} AI latency has exceeded 500 ms during the last 5 minutes.
+
+      - alert: Backend5xxRateHigh
+        expr: sum(rate(unknown_detection_http_requests_total{status=~"5.."}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: backend
+        annotations:
+          summary: Backend 5xx rate is high
+          description: Backend is returning more than 0.05 5xx responses per second over 5 minutes.
+
+      - alert: HostDiskNearlyFull
+        expr: 1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) > 0.90
+        for: 10m
+        labels:
+          severity: warning
+          component: host
+        annotations:
+          summary: Host disk usage is above 90%
+          description: Mount {{ $labels.mountpoint }} on {{ $labels.instance }} is above 90% usage.
+
+      - alert: RedisDown
+        expr: up{job="redis-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: Redis exporter is down
+          description: Prometheus cannot scrape redis-exporter for more than 2 minutes.
+
+      - alert: PostgresDown
+        expr: up{job="postgres-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: postgres
+        annotations:
+          summary: Postgres exporter is down
+          description: Prometheus cannot scrape postgres-exporter for more than 2 minutes.
+
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: qdrant
+        annotations:
+          summary: Qdrant metrics target is down
+          description: Prometheus cannot scrape Qdrant metrics for more than 2 minutes.

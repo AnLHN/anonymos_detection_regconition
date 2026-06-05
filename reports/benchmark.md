@@ -1,51 +1,32 @@
 # Benchmark pipeline
 
-Chưa có dữ liệu benchmark thực tế.
+## Input
 
-## Cách chạy
+- Images: 2
+- Faces processed: 4
+- Labeled images: 2
 
-```powershell
-python scripts/benchmark/benchmark_pipeline.py --input path\to\image_or_folder
-```
+## End-to-end latency
 
-Output:
+- Average: 1311.87 ms/image
+- Min: 1211.94 ms
+- Max: 1411.81 ms
+- P50: 1211.94 ms
+- P95: 1411.81 ms
 
-```text
-reports/benchmark_results.json
-reports/benchmark.md
-```
+## Recognition quality
 
-## Chỉ số kỹ thuật cần đo
+- Known images: 1
+- Unknown images: 1
+- Known accuracy: 100.00%
+- Unknown detection rate: 100.00%
+- False accept rate: 100.00%
+- False reject rate: 0.00%
+- Unverified rate: 0.00%
 
-- End-to-end latency trung bình trên mỗi ảnh.
-- P50/P95 latency.
-- Số face xử lý được.
-- Trạng thái trả về: Known / Unknown / Unverified.
+## Per-image results
 
-## Chỉ số chất lượng cần có dataset có nhãn
-
-- Known accuracy.
-- Unknown detection rate.
-- False accept.
-- False reject.
-- Warning precision.
-- Warning spam rate.
-- Unverified rate.
-
-## Dataset cần chuẩn bị
-
-```text
-data/benchmark/
-├── known/
-│   ├── employee_001_*.jpg
-│   └── employee_002_*.jpg
-├── unknown/
-│   ├── stranger_001_*.jpg
-│   └── stranger_002_*.jpg
-└── hard_cases/
-    ├── blur_*.jpg
-    ├── low_light_*.jpg
-    └── side_face_*.jpg
-```
-
-Không nên khóa threshold production nếu chưa có dữ liệu camera thật.
+| Image | Expected | Latency ms | Faces | Statuses | Best score | Best label |
+|---|---|---:|---:|---|---:|---|
+| data\benchmark\known\manual_static_known_full.jpg | known | 1211.94 | 2 | unknown, known | 0.5826 | Hồ Văn Phương |
+| data\benchmark\unknown\manual_static_unknown_full.jpg | unknown | 1411.81 | 2 | unknown, known | 0.5826 | Hồ Văn Phương |

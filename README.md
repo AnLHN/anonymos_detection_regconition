@@ -2,7 +2,7 @@
 
 # Anonymous Detection & Recognition
 
-**AI-powered RTSP camera monitoring, face recognition, unknown-person detection, and security alert platform.**
+**Nền tảng giám sát camera RTSP, nhận diện khuôn mặt nhân viên, phát hiện người lạ và quản trị cảnh báo theo thời gian thực.**
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-blue?style=for-the-badge)
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge)
@@ -13,80 +13,89 @@
 ![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-Inference-orange?style=for-the-badge)
 ![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-red?style=for-the-badge)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?style=for-the-badge)
-![MediaMTX](https://img.shields.io/badge/MediaMTX-WebRTC_RTSP-purple?style=for-the-badge)
+![Redis](https://img.shields.io/badge/Redis-State-red?style=for-the-badge)
+![RabbitMQ](https://img.shields.io/badge/RabbitMQ-Events-orange?style=for-the-badge)
+![MediaMTX](https://img.shields.io/badge/MediaMTX-RTSP_WebRTC-purple?style=for-the-badge)
+![Prometheus](https://img.shields.io/badge/Prometheus-Metrics-orange?style=for-the-badge)
 ![Docker](https://img.shields.io/badge/Docker-Compose-blue?style=for-the-badge)
 
-[Overview](#overview) · [System Flow](#system-flow) · [Quick Start](#quick-start) · [Pipelines](#application-pipelines) · [Repository Map](#repository-map) · [Docs](#docs-index)
+[Tổng quan](#tổng-quan) - [Chạy nhanh](#chạy-nhanh) - [Production](#production) - [Pipeline](#pipeline) - [CI/CD](#cicd) - [Docs](#docs)
 
 </div>
 
 ---
 
-## Overview
+## Tổng Quan
 
-Anonymous Detection & Recognition is a production-base security monitoring system for detecting and recognizing people from RTSP cameras. It uses InsightFace locally for face detection and 512-dimensional embedding extraction, Qdrant for vector similarity search, PostgreSQL for users/cameras/rules/events, FastAPI for the backend gateway, and Next.js for the admin dashboard.
+Anonymous Detection & Recognition là hệ thống giám sát an ninh dùng camera RTSP để nhận diện nhân viên và phát hiện người lạ. Hệ thống dùng FastAPI làm backend gateway, Next.js làm admin dashboard, InsightFace/ONNX Runtime cho nhận diện khuôn mặt, Qdrant cho tìm kiếm vector embedding, PostgreSQL cho dữ liệu nghiệp vụ, Redis/RabbitMQ cho trạng thái realtime và event pipeline.
 
-| Component | Tech Stack | Current State |
+| Thành phần | Công nghệ | Trạng thái |
 |---|---|---|
-| **Backend API** | FastAPI + PyJWT + psycopg | Implemented: JWT auth, health checks, alerts, cameras, rules, employees, snapshot/static serving |
-| **Frontend UI** | Next.js 14 + React 18 + TypeScript | Implemented: login, admin shell, dashboard metrics, live monitor, alerts, cameras, rules, employees |
-| **AI Worker** | InsightFace + ONNX Runtime + OpenCV | Implemented: RTSP frame reader, face detection, embedding extraction, recognition decision, tracking, rule engine |
-| **Vector Search** | Qdrant | Implemented: `employee_faces` collection, 512-d vectors, cosine similarity, top-k matching |
-| **Data Layer** | PostgreSQL 16 + local storage | Implemented: accounts, employees, cameras, alert rules, unknown events, metrics, snapshots, JSONL fallback |
-| **Infrastructure** | Docker Compose + MediaMTX | Implemented: local development stack, production compose, WebRTC/RTSP gateway, startup/stop scripts, CI validation |
+| Backend API | FastAPI, PyJWT, psycopg | JWT auth, RBAC, users CRUD, alerts, cameras, rules, employees, system health, metrics |
+| Frontend Admin | Next.js 14, React 18, TypeScript | Login, dashboard, cameras, alerts, employees, rules, users, system monitoring |
+| AI Worker | InsightFace, ONNX Runtime, OpenCV | Đọc RTSP, detect face, embedding 512-d, match Qdrant, tracking, rule engine |
+| Vector DB | Qdrant | Collection `employee_faces`, cosine search, metadata nhân viên |
+| Data Layer | PostgreSQL, local storage | Accounts, employees, cameras, rules, unknown events, snapshots, audit logs |
+| Runtime State | Redis, RabbitMQ | Camera heartbeat, reload cooldown, frame/meta realtime, alert event queue |
+| Streaming | MediaMTX | RTSP relay và WebRTC/WHEP endpoint |
+| Observability | Prometheus, Alertmanager, Grafana | Metrics backend/infra, health checks, monitoring dashboard |
+| Production | Docker Compose, Nginx | Production compose, reverse proxy, startup/stop scripts, env validation |
 
 ---
 
-## System Flow
+## Luồng Hệ Thống
 
 ```mermaid
 flowchart TD
-    Camera[RTSP Camera / Video Source] -->|RTSP stream| MediaMTX[MediaMTX Gateway]
-    MediaMTX -->|WebRTC / RTSP relay| Worker[AI Worker]
+    Camera[RTSP Camera] --> MediaMTX[MediaMTX]
+    MediaMTX --> Worker[AI Camera Worker]
 
-    Worker -->|Read frames| Reader[Camera Reader]
-    Reader -->|OpenCV frame batch| FacePipeline[Face Pipeline]
-    FacePipeline -->|1. Face detection| Detector[InsightFace Detector]
-    FacePipeline -->|2. Embedding 512-d| Recognizer[InsightFace Recognizer]
-    Recognizer -->|Vector search top-k| Qdrant[(Qdrant employee_faces)]
+    Worker --> Reader[Camera Reader]
+    Reader --> FacePipeline[Face Pipeline]
+    FacePipeline --> Detector[InsightFace Detector]
+    FacePipeline --> Embedding[512-d Embedding]
+    Embedding --> Qdrant[(Qdrant employee_faces)]
 
-    Qdrant -->|Best match score| Decision[Recognition Decision]
-    Decision -->|known / unknown / unverified| Tracker[Tracking + Voting]
-    Tracker -->|Stable unknown track| Rules[Zone Manager + Rule Engine]
-    Rules -->|Rule matched| Alerts[Alert Manager]
+    Qdrant --> Decision[Known / Unknown Decision]
+    Decision --> Tracker[Tracking + Voting]
+    Tracker --> RuleEngine[Rule Engine + Zone]
+    RuleEngine --> AlertManager[Alert Manager]
 
-    Alerts -->|Save full frame / face crop| Storage[(storage/snapshots)]
-    Alerts -->|Persist event + metrics| Postgres[(PostgreSQL 16)]
-    Alerts -->|Fallback event log| Logs[(storage/logs JSONL)]
+    AlertManager --> Storage[(storage/snapshots)]
+    AlertManager --> RabbitMQ[(RabbitMQ alert_events)]
+    RabbitMQ --> AlertConsumer[Alert Consumer]
+    AlertConsumer --> Postgres[(PostgreSQL)]
 
-    Browser[Browser Client] -->|Admin UI :3000 / :8080| Frontend[Next.js Admin Dashboard]
-    Frontend -->|JWT API calls| Backend[FastAPI Gateway]
-    Backend -->|Auth, cameras, rules, alerts| Postgres
-    Backend -->|Employee search / vector metadata| Qdrant
-    Backend -->|Snapshot files| Storage
+    Worker --> Redis[(Redis heartbeat/meta/frame state)]
+
+    Browser[Browser Admin UI] --> Frontend[Next.js Dashboard]
+    Frontend --> Backend[FastAPI Gateway]
+    Backend --> Postgres
+    Backend --> Qdrant
+    Backend --> Redis
+    Backend --> Storage
+    Backend --> Prometheus[Prometheus]
 ```
 
 ---
 
-## Quick Start
+## Chạy Nhanh
 
-All commands should be executed from the repository root.
+Tất cả lệnh chạy từ thư mục root của repo.
 
-### 1. Centralized Environment Configuration
-
-Create a local environment file from the committed safe template:
+### 1. Tạo file môi trường
 
 ```bash
 cp .env.example .env
 ```
 
-On Windows PowerShell:
+Trên Windows PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Before running with real cameras, update at least:
+Các biến nên kiểm tra trước khi chạy camera thật:
 
 ```text
 POSTGRES_PASSWORD
@@ -97,44 +106,29 @@ DEFAULT_AI_INTERVAL
 UNKNOWN_ALERT_COOLDOWN_SECONDS
 ```
 
-### 2. Startup Development Stack
+### 2. Start development stack
 
-Start Postgres, Qdrant, MediaMTX, initialize schema, verify databases, then launch backend and frontend:
+Khuyến nghị dùng Git Bash trên Windows:
 
 ```bash
 ./start.sh
 ```
 
-Default local URLs:
+Script sẽ start Docker infra, bootstrap DB, init schema, verify DB, start backend, alert consumer, AI worker và frontend.
+
+URL mặc định:
 
 ```text
-Frontend:        http://localhost:3000
-Backend Health:  http://localhost:8000/system/health
-Qdrant HTTP:     http://localhost:7002
-MediaMTX WHEP:   http://localhost:8889
+Frontend local:      http://localhost:3000
+Frontend LAN:        http://192.168.2.17:3000
+Backend health:      http://localhost:8000/system/health
+Qdrant HTTP:         http://localhost:7002
+MediaMTX WHEP:       http://localhost:8889
+Prometheus:          http://localhost:9090
+RabbitMQ UI:         http://localhost:15672
 ```
 
-### 3. Run AI Worker
-
-Run all active cameras from the database:
-
-```powershell
-python scripts/cameras/run_worker.py
-```
-
-Run one configured camera:
-
-```powershell
-python scripts/cameras/run_worker.py --camera-id door_67b
-```
-
-Run directly from one RTSP URL:
-
-```powershell
-python ai_worker/run_rtsp.py --camera-id door_67b --source "rtsp://user:password@ip:554/Streaming/Channels/101"
-```
-
-### 4. Stop Development Stack
+### 3. Stop development stack
 
 ```bash
 ./stop.sh
@@ -142,77 +136,19 @@ python ai_worker/run_rtsp.py --camera-id door_67b --source "rtsp://user:password
 
 ---
 
-## Manual Start (Local Development)
+## Production
 
-Use this when starting each service manually instead of using `start.sh`.
-
-### 1. Start Infrastructure Stack
-
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
-
-### 2. Initialize and Verify Databases
-
-```powershell
-python scripts/db/init_event_schema.py
-python scripts/db/verify_databases.py
-```
-
-Optional import from exported data:
-
-```powershell
-python scripts/db/import_postgres_export.py
-python scripts/db/import_qdrant_export.py
-```
-
-### 3. Start Backend API Gateway
-
-```powershell
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
-```
-
-* API Health: `http://localhost:8000/system/health`
-* API Root: `http://localhost:8000/`
-
-### 4. Start Frontend Dashboard
-
-```powershell
-npm ci --prefix frontend
-npm run dev --prefix frontend
-```
-
-* Development URL: `http://localhost:3000`
-
-### 5. Start AI Camera Worker
-
-```powershell
-python scripts/cameras/run_worker.py
-```
-
----
-
-## Production Start
-
-Validate production environment first:
+Validate production config:
 
 ```bash
 python scripts/dev/validate_production_env.py
+docker compose --env-file .env.example -f infra/docker-compose.production.yml config --quiet
 ```
 
-Build and start the full production stack:
+Start production stack:
 
 ```bash
 ./start-production.sh
-```
-
-Default production URLs:
-
-```text
-Frontend: http://localhost:8080
-Backend:  http://localhost:8000
 ```
 
 Stop production stack:
@@ -221,49 +157,52 @@ Stop production stack:
 ./stop-production.sh
 ```
 
----
-
-## Application Pipelines
-
-### Unknown-Person Detection Pipeline
-
-| Step | Component | Action |
-|---:|---|---|
-| 1 | Camera / MediaMTX | Receives RTSP source and exposes WebRTC/RTSP relay |
-| 2 | `ai_worker` | Reads frames using OpenCV/camera reader |
-| 3 | InsightFace Detector | Detects faces and filters by score/face size |
-| 4 | InsightFace Recognizer | Extracts normalized 512-d face embedding |
-| 5 | Qdrant | Searches `employee_faces` collection using cosine similarity |
-| 6 | Recognition Decision | Classifies face as `known`, `unknown`, or `unverified` |
-| 7 | Tracker + Voting | Stabilizes decisions across multiple frames and track IDs |
-| 8 | Rule Engine | Applies working-hour, restricted-zone, gate, and cooldown rules |
-| 9 | Alert Manager | Saves snapshots, writes `unknown_events`, metrics, and JSONL fallback |
-| 10 | Admin UI | Displays dashboard metrics, live monitor, alerts, and event details |
-
-### Authentication & Admin Pipeline
-
-| Step | Component | Action |
-|---:|---|---|
-| 1 | Browser UI | User logs in through Next.js admin dashboard |
-| 2 | Backend Gateway | Validates credentials and issues JWT |
-| 3 | Frontend API Client | Sends JWT with protected API requests |
-| 4 | FastAPI Routers | Serves alerts, cameras, rules, employees, system health, and metrics |
-| 5 | PostgreSQL | Persists accounts, camera sources, rules, unknown events, audit logs, and metrics |
-| 6 | Qdrant | Stores employee face vectors and metadata for recognition |
+Production stack gồm Nginx, backend, frontend, AI worker, alert consumer, Postgres, Qdrant, Redis, RabbitMQ, MediaMTX, Prometheus, Alertmanager và Grafana tùy cấu hình.
 
 ---
 
-## Deployment Profiles
+## Pipeline
 
-| Profile | Cwd / Entry point | Description | Ports (Host) |
-|---|---|---|---|
-| **Frontend Admin** | `frontend/` | Next.js admin dashboard for monitoring and operations | Dev `3000`, Prod `8080` |
-| **Backend Gateway** | `backend/` | FastAPI API for auth, system health, alerts, cameras, rules, employees | `8000` |
-| **AI Worker** | `ai_worker/` | RTSP camera processing, recognition, tracking, rule evaluation, alert creation | Internal / process |
-| **PostgreSQL** | `infra/docker-compose*.yml` | Relational data store for users, cameras, rules, events, metrics | `7001` |
-| **Qdrant** | `infra/docker-compose*.yml` | Vector database for employee face embeddings | HTTP `7002`, gRPC `7003` |
-| **MediaMTX** | `infra/mediamtx.yml` | RTSP/WebRTC gateway for camera streams | `8889` |
-| **Runtime Storage** | `storage/` | Snapshots, debug faces, logs, JSONL fallback files | Local filesystem |
+### Unknown Detection
+
+| Bước | Component | Hành động |
+|---:|---|---|
+| 1 | Camera | Gửi RTSP stream |
+| 2 | MediaMTX | Relay stream cho worker và web preview |
+| 3 | AI Worker | Đọc frame, resize, detect face |
+| 4 | InsightFace | Tạo embedding khuôn mặt |
+| 5 | Qdrant | Tìm nhân viên gần nhất theo cosine similarity |
+| 6 | Tracker | Gom nhiều frame để giảm false positive |
+| 7 | Rule Engine | Kiểm tra zone, cooldown, severity, rule active |
+| 8 | Alert Manager | Lưu snapshot và publish event |
+| 9 | Alert Consumer | Ghi event bền vững vào Postgres |
+| 10 | Frontend | Hiển thị alert, camera status, meta realtime |
+
+### Auth Và RBAC
+
+| Role | Tên | Ý nghĩa |
+|---:|---|---|
+| 0 | viewer | Chỉ xem |
+| 1 | operator | Vận hành cơ bản |
+| 5 | admin | Quản trị nghiệp vụ |
+| 9 | admin_super | Toàn quyền |
+
+Backend inject `CurrentUser` từ JWT, sau đó các router dùng permission như `users:update`, `alerts:delete`, `rules:update`, `cameras:update` để cho phép hoặc từ chối thao tác.
+
+### Camera Reload
+
+Reload camera có Redis cooldown để chống spam. Backend không spawn trực tiếp worker nặng trong request reload; frontend disable nút reload đến khi hết cooldown.
+
+---
+
+## Những Sửa Đổi Quan Trọng Gần Đây
+
+- Frontend local dùng `NEXT_DIST_DIR=.next-rapi-local` để tránh cache `.next`/`.next-dev-local` bị kẹt quyền trên Windows.
+- `start.sh` dùng `NEXT_PUBLIC_API_BASE=http://192.168.2.17:3000/api` trong LAN mode để tránh Git Bash/MSYS đổi `/api` thành `D:/Git/api`.
+- `frontend/src/lib/config.ts` normalize API base, tự fallback về `/api` nếu gặp Windows path hoặc `file:`.
+- Camera reload có cooldown backend/frontend, tránh spam reload làm worker/backend bị nghẽn.
+- Users CRUD audit log đã convert `datetime/date` sang ISO string trước khi ghi JSONB.
+- `setup.sh` mặc định chạy frontend typecheck thay vì production build nặng.
 
 ---
 
@@ -271,107 +210,60 @@ Stop production stack:
 
 ```text
 .
-├── .github/workflows/              GitHub Actions CI workflow
-├── ai_worker/                      AI pipeline, RTSP worker, tracking, rules, alerts
-│   ├── face_pipeline.py            Detection + recognition pipeline
-│   ├── insightface_detector.py     InsightFace face detector wrapper
-│   ├── insightface_recognizer.py   InsightFace embedding extractor
-│   ├── qdrant_service.py           Vector search service
-│   ├── postgres_event_service.py   Unknown event persistence
-│   ├── rule_engine.py              Alert rule evaluation
-│   ├── camera_worker.py            Camera processing loop
-│   └── run_rtsp.py                 Direct RTSP worker entry point
-│
-├── backend/                        FastAPI backend gateway
-│   ├── auth/                       JWT login and current-user endpoints
-│   ├── alerts/                     Unknown event APIs
-│   ├── cameras/                    Camera source and annotated stream APIs
-│   ├── employees/                  Employee list APIs
-│   ├── rules/                      Alert rule APIs
-│   ├── system/                     Health and metrics APIs
-│   └── main.py                     FastAPI application entry point
-│
-├── core/                           Shared settings loader
-├── data/exports/                   Optional local export/import files
-├── docs/                           Setup, architecture, model, operations, deployment, CI/CD docs
-├── frontend/                       Next.js admin UI
-│   ├── src/app/                    App Router pages
-│   ├── src/components/             Dashboard, monitor, alerts, cameras, rules, employees UI
-│   └── src/lib/                    API client, auth helpers, types, config
-│
-├── infra/                          Docker Compose and MediaMTX config
-│   ├── docker-compose.yml          Local infrastructure stack
-│   ├── docker-compose.production.yml
-│   └── mediamtx.yml
-│
-├── plan/                           Project roadmap and implementation plan
-├── reports/                        Handover, pipeline, architecture, benchmark and user docs
-├── scripts/                        Database, camera, benchmark, and dev utility scripts
-├── storage/                        Runtime snapshots, logs, debug faces
-├── .env.example                    Safe environment template
-├── requirements.txt                Python dependencies
-├── setup.sh                        Initial setup script
-├── start.sh                        Local development launcher
-├── stop.sh                         Local development stop script
-├── start-production.sh             Production Compose launcher
-└── stop-production.sh              Production Compose stop script
+├── backend/                         FastAPI backend gateway
+│   ├── alerts/                      Alerts CRUD, safe delete, restore, repair
+│   ├── auth/                        JWT auth, login events, RBAC security
+│   ├── cameras/                     Camera config, runtime, annotated stream, reload guard
+│   ├── employees/                   Employee list/search/enroll
+│   ├── rules/                       Alert rule management
+│   ├── system/                      Health, analytics, monitoring API
+│   ├── users/                       User CRUD, role update, audit log
+│   └── main.py                      FastAPI app entrypoint
+├── frontend/                        Next.js admin dashboard
+│   ├── src/app/                     App Router pages
+│   ├── src/components/              Dashboard panels
+│   ├── src/lib/                     API client, auth, config, types, permissions
+│   └── next.config.js               Rewrites and local distDir support
+├── ai_worker/                       Camera AI worker
+├── scripts/                         DB, camera, alert, dev validation scripts
+├── infra/                           Docker compose, Nginx, Prometheus, Grafana, MediaMTX
+├── docs/                            Architecture, setup, deployment, operations, CI/CD
+├── reports/                         Reports and benchmark results
+├── storage/                         Runtime snapshots/logs/debug faces
+├── .github/workflows/ci.yml         GitHub Actions CI
+├── .env.example                     Safe env template
+├── setup.sh                         Install/bootstrap script
+├── start.sh                         Local start script
+├── stop.sh                          Local stop script
+├── start-production.sh              Production start script
+└── stop-production.sh               Production stop script
 ```
-
----
-
-## Docs Index
-
-Detailed design and operation documents are maintained under `docs/`, `reports/`, and `plan/`:
-
-| Document | Purpose |
-|---|---|
-| [**`docs/setup.md`**](docs/setup.md) | Installation, environment preparation, and local setup |
-| [**`docs/architecture.md`**](docs/architecture.md) | System architecture, service responsibilities, and deployment view |
-| [**`docs/model.md`**](docs/model.md) | InsightFace, embeddings, thresholding, and recognition logic |
-| [**`docs/operations.md`**](docs/operations.md) | Runtime operations, health checks, logs, and maintenance |
-| [**`docs/deployment.md`**](docs/deployment.md) | Production deployment with Docker Compose |
-| [**`docs/ci-cd.md`**](docs/ci-cd.md) | CI workflow and pre-push validation |
-| [**`plan/plan.md`**](plan/plan.md) | Roadmap, milestones, and implementation checklist |
-| [**`reports/final_report.md`**](reports/final_report.md) | Final project report and handover summary |
-| [**`reports/user_guide.md`**](reports/user_guide.md) | Admin user guide |
-| [**`reports/benchmark.md`**](reports/benchmark.md) | Benchmark plan and results |
-
----
-
-## Service Credentials Reference
-
-Read all sensitive values dynamically from the root `.env` file when deploying to production.
-
-| Service | Host Port | Username | Password / Secret |
-|---|---:|---|---|
-| **Frontend Admin** | `3000` / `8080` | App account | Managed by backend auth |
-| **Backend API** | `8000` | JWT bearer token | `JWT_SECRET` |
-| **PostgreSQL DB** | `7001` | `POSTGRES_USER` | `POSTGRES_PASSWORD` |
-| **Qdrant HTTP** | `7002` | — | Configure network access/security externally |
-| **Qdrant gRPC** | `7003` | — | Configure network access/security externally |
-| **MediaMTX WebRTC** | `8889` | Camera credentials | `CAMERA_*_RTSP` |
 
 ---
 
 ## CI/CD
 
-The main workflow is located at `.github/workflows/ci.yml` and validates the project on push or pull request.
+Workflow chính:
 
-Current CI checks include:
+```text
+.github/workflows/ci.yml
+```
 
-| Stage | Action |
-|---|---|
-| Python | Install Python 3.12 dependencies from `requirements.txt` |
-| Config | Create `.env` from `.env.example` for CI-safe validation |
-| Compile | Compile Python source with `py_compile` |
-| Backend | Import FastAPI app to catch early import/config errors |
-| Frontend | Run `npm ci`, `npm run typecheck`, and `npm run build` |
-| Docker | Validate `infra/docker-compose.production.yml` with `docker compose config --quiet` |
+CI hiện kiểm tra:
 
-Recommended local pre-push checks:
+1. Python 3.12 dependencies.
+2. Copy `.env.example` sang `.env`.
+3. Compile toàn bộ Python bằng `py_compile`.
+4. Import FastAPI app.
+5. Node.js 20 dependencies bằng `npm ci --prefix frontend`.
+6. Frontend typecheck.
+7. Frontend production build.
+8. Validate production compose config.
+
+Local checks trước khi push:
 
 ```powershell
-$files = Get-ChildItem -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '\\.venv|__pycache__' } | ForEach-Object { $_.FullName }
+$files = Get-ChildItem -Recurse -Filter *.py | Where-Object { $_.FullName -notmatch '\\.venv|__pycache__|\\.next|node_modules' } | ForEach-Object { $_.FullName }
 python -m py_compile $files
 python -c "from backend.main import app; print(app.title)"
 npm ci --prefix frontend
@@ -382,56 +274,25 @@ docker compose --env-file .env.example -f infra/docker-compose.production.yml co
 
 ---
 
-## Benchmark
+## Checklist Push GitHub
 
-Prepare dataset folders:
-
-```text
-data/benchmark/known/
-data/benchmark/unknown/
-data/benchmark/hard_cases/
-```
-
-Run benchmark:
-
-```powershell
-python scripts/benchmark/benchmark_pipeline.py --input data/benchmark
-```
-
-Output:
-
-```text
-reports/benchmark_results.json
-reports/benchmark.md
-```
+- Không commit `.env`, token, mật khẩu, RTSP thật.
+- Không commit `admin_super_login.md` nếu có thông tin đăng nhập thật.
+- Không commit `.runtime/`, `.next*`, `storage/snapshots/*`, `storage/logs/*`, `test-results/`.
+- Kiểm tra `.env.example` chỉ chứa placeholder an toàn.
+- Chạy Python compile, frontend typecheck/build và Compose validation.
+- Nếu sửa camera/worker, smoke test ít nhất một camera active.
+- Nếu sửa auth/users/RBAC, test login bằng `admin_super` và update role user.
 
 ---
 
-## API Reference
+## Docs
 
-```text
-POST  /auth/login
-GET   /auth/me
-GET   /system/health
-GET   /system/metrics
-GET   /alerts
-GET   /alerts/{event_id}
-PATCH /alerts/{event_id}/status
-GET   /employees
-GET   /cameras
-GET   /rules
-PATCH /rules/{rule_code}
-GET   /snapshots/{filename}
-GET   /storage/*
-```
-
----
-
-## Architecture Accuracy Notes
-
-- **Local AI Inference**: Face detection and embedding extraction run locally through InsightFace/ONNX Runtime; raw frames do not need to leave the deployment machine for recognition.
-- **Vector-Based Identity Matching**: Employee recognition is based on 512-dimensional face embeddings in Qdrant with cosine similarity and a configurable `FACE_THRESHOLD`.
-- **Noise-Resistant Alerting**: Unknown-person alerts are stabilized by face quality checks, tracking, multi-frame voting, zone/rule evaluation, and cooldown windows.
-- **Runtime Data Separation**: Source code is separated from runtime artifacts. Snapshots, logs, debug faces, benchmark datasets, and exports live under `storage/`, `reports/`, or `data/` and should not contain committed production secrets.
-- **Production Secret Hygiene**: Never deploy with `.env.example` defaults. Rotate `POSTGRES_PASSWORD`, generate a strong `JWT_SECRET`, and replace all placeholder camera credentials before production use.
-- **Camera Calibration Required**: Final thresholds, ROI zones, working hours, and alert cooldowns should be calibrated using real camera feeds and real lighting conditions before operating in production.
+| File | Nội dung |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | Kiến trúc backend/frontend/worker/infra |
+| [docs/setup.md](docs/setup.md) | Setup local, Git Bash, frontend cache, start/stop |
+| [docs/deployment.md](docs/deployment.md) | Production compose, Nginx, env validation |
+| [docs/operations.md](docs/operations.md) | Vận hành camera, worker, logs, troubleshooting |
+| [docs/ci-cd.md](docs/ci-cd.md) | GitHub Actions, local checks, release checklist |
+| [docs/model.md](docs/model.md) | Model, embedding, threshold và nhận diện |

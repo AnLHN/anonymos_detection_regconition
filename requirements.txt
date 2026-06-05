@@ -9,3 +9,6 @@ psycopg[binary]
 PyJWT
 python-dotenv
 uvicorn
+prometheus-client
+redis
+pika

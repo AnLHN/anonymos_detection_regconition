@@ -1,0 +1,17 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+.env.*
+!.env.example
+data/exports/*.json
+storage/snapshots/*
+storage/logs/*
+storage/debug_faces/*
+reports/benchmark_results.json
+backups/*
+.claude

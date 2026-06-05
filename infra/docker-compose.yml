@@ -30,6 +30,150 @@ services:
       timeout: 5s
       retries: 20
 
+  redis:
+    image: redis:7-alpine
+    container_name: unknown-detection-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: unknown-detection-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: face_user
+      RABBITMQ_DEFAULT_PASS: face_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: unknown-detection-mediamtx
+    environment:
+      CAMERA_DOOR_67B_RTSP: ${CAMERA_DOOR_67B_RTSP:-rtsp://user:password@camera-ip:554/Streaming/Channels/101}
+      CAMERA_AI_PM_1_RTSP: ${CAMERA_AI_PM_1_RTSP:-rtsp://user:password@camera-ip:554/Streaming/Channels/101}
+      CAMERA_AI_PM_2_RTSP: ${CAMERA_AI_PM_2_RTSP:-rtsp://user:password@camera-ip:554/Streaming/Channels/201}
+      MEDIAMTX_RTSP_TRANSPORT: ${MEDIAMTX_RTSP_TRANSPORT:-tcp}
+    ports:
+      - "8889:8889"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: unknown-detection-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: unknown-detection-alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    container_name: unknown-detection-grafana
+    profiles: ["grafana"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ALLOW_EMBEDDING: ${GRAFANA_ALLOW_EMBEDDING:-true}
+      GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_AUTH_ANONYMOUS_ENABLED:-true}
+      GF_AUTH_ANONYMOUS_ORG_ROLE: ${GRAFANA_AUTH_ANONYMOUS_ORG_ROLE:-Viewer}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./grafana-dashboard-unknown-detection.json:/etc/grafana/provisioning/dashboards/unknown-detection.json:ro
+    depends_on:
+      - prometheus
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: unknown-detection-node-exporter
+    profiles: ["linux-metrics"]
+    command:
+      - "--path.rootfs=/host"
+    pid: host
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /:/host:ro,rslave
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: unknown-detection-cadvisor
+    profiles: ["linux-metrics"]
+    privileged: true
+    ports:
+      - "${CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: unknown-detection-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    ports:
+      - "${REDIS_EXPORTER_PORT:-9121}:9121"
+    depends_on:
+      - redis
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.16.0
+    container_name: unknown-detection-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: postgresql://face_user:face_password@postgres:5432/face_db?sslmode=disable
+    ports:
+      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"
+    depends_on:
+      - postgres
+
 volumes:
   postgres_data:
   qdrant_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  alertmanager_data:
+  grafana_data:

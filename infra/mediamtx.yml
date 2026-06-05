@@ -1,0 +1,22 @@
+logLevel: info
+
+api: yes
+apiAddress: :9997
+
+rtsp: yes
+rtspAddress: :8554
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowOrigin: '*'
+
+paths:
+  door_67b:
+    source: ${CAMERA_DOOR_67B_RTSP}
+    sourceProtocol: ${MEDIAMTX_RTSP_TRANSPORT}
+  ai_pm_1:
+    source: ${CAMERA_AI_PM_1_RTSP}
+    sourceProtocol: ${MEDIAMTX_RTSP_TRANSPORT}
+  ai_pm_2:
+    source: ${CAMERA_AI_PM_2_RTSP}
+    sourceProtocol: ${MEDIAMTX_RTSP_TRANSPORT}

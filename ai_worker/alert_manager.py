@@ -6,8 +6,9 @@ from uuid import uuid4
 
 import cv2
 
-from config import EVENT_LOG_PATH, SNAPSHOT_DIR
+from config import EVENT_LOG_PATH, FACE_THRESHOLD, MIN_DETECTION_SCORE, SNAPSHOT_DIR
 from postgres_event_service import PostgresEventService
+from rabbitmq_event_publisher import RabbitMQEventPublisher
 from unknown_event_detector import UnknownWarning
 
 
@@ -16,6 +17,7 @@ class AlertManager:
         self.snapshot_dir = snapshot_dir
         self.event_log_path = event_log_path
         self.event_service = PostgresEventService()
+        self.event_publisher = RabbitMQEventPublisher()
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
         self.event_log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -45,13 +47,16 @@ class AlertManager:
             "warning_type": warning.warning_type,
             "warning_level": warning.warning_level,
             "reason": warning.reason,
+            "rule_config": warning.rule_config or {},
+            "recognition_threshold": FACE_THRESHOLD,
+            "detection_threshold": MIN_DETECTION_SCORE,
             "bbox": list(warning.face_result.face.bbox),
             "best_match": asdict(best_candidate) if best_candidate else None,
             "snapshot_full": str(full_path),
             "snapshot_face": str(face_path) if face_path else None,
         }
         self._append_event(event)
-        self.event_service.insert_unknown_event(event)
+        self._publish_or_insert_event(event)
         return event
 
     def _crop_face(self, frame, warning: UnknownWarning):
@@ -68,6 +73,13 @@ class AlertManager:
     def _append_event(self, event: dict) -> None:
         with self.event_log_path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def _publish_or_insert_event(self, event: dict) -> None:
+        try:
+            self.event_publisher.publish_alert_event(event)
+        except Exception as error:
+            print(f"RabbitMQ publish failed, writing event directly to Postgres: {error}")
+            self.event_service.insert_unknown_event(event)
 
     def _event_id(self) -> str:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -25,31 +25,31 @@ POSTGRES_DSN = get_str(
     "POSTGRES_DSN",
     f"host={POSTGRES_HOST} port={POSTGRES_PORT} dbname={POSTGRES_DATABASE} user={POSTGRES_USER} password={POSTGRES_PASSWORD}",
 )
+REDIS_URL = get_str("REDIS_URL", "redis://localhost:6379/0")
+STREAM_PUBLISH_FPS = get_float("STREAM_PUBLISH_FPS", 5.0)
+STREAM_JPEG_QUALITY = get_int("STREAM_JPEG_QUALITY", 75)
+STREAM_FRAME_TTL_SECONDS = get_int("STREAM_FRAME_TTL_SECONDS", 10)
+RABBITMQ_URL = get_str("RABBITMQ_URL", "amqp://face_user:face_password@localhost:5672/")
 EMPLOYEES_TABLE = "employees"
 
 INSIGHTFACE_DEVICE = get_str("INSIGHTFACE_DEVICE", "cpu")
 INSIGHTFACE_DETECTION_MODEL = get_str("INSIGHTFACE_DETECTION_MODEL", "buffalo_l")
 INSIGHTFACE_RECOGNITION_MODEL = get_str("INSIGHTFACE_RECOGNITION_MODEL", "buffalo_l")
 
-FACE_THRESHOLD = get_float("FACE_THRESHOLD", 0.60)
+FACE_THRESHOLD = get_float("FACE_THRESHOLD", 0.55)
 MIN_DETECTION_SCORE = get_float("MIN_DETECTION_SCORE", 0.75)
 MIN_FACE_WIDTH = get_int("MIN_FACE_WIDTH", 60)
 MIN_FACE_HEIGHT = get_int("MIN_FACE_HEIGHT", 60)
 TOP_K = get_int("TOP_K", 5)
 
-UNKNOWN_STABLE_FRAMES = get_int("UNKNOWN_STABLE_FRAMES", 5)
-UNKNOWN_ALERT_COOLDOWN_SECONDS = get_int("UNKNOWN_ALERT_COOLDOWN_SECONDS", 30)
+UNKNOWN_STABLE_FRAMES = get_int("UNKNOWN_STABLE_FRAMES", 12)
+UNKNOWN_ALERT_COOLDOWN_SECONDS = get_int("UNKNOWN_ALERT_COOLDOWN_SECONDS", 300)
 STORAGE_DIR = PROJECT_ROOT / "storage"
 SNAPSHOT_DIR = STORAGE_DIR / "snapshots"
 EVENT_LOG_PATH = STORAGE_DIR / "logs" / "events.jsonl"
 
 CAMERA_ZONES = {
-    "webcam_0": {
-        "gate": [(40, 80), (440, 80), (440, 420), (40, 420)],
-    },
-    "door_67b": {
-        "gate": [(40, 80), (440, 80), (440, 420), (40, 420)],
-    },
+    "door_67b": {},
     "ai_pm_1": {},
     "ai_pm_2": {},
 }
