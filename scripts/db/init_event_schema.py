@@ -173,13 +173,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email_unique
 ON accounts (email)
 WHERE email IS NOT NULL;
 
-INSERT INTO accounts (username, email, password_hash, role, is_active)
-VALUES ('admin_super', 'admin_super@example.local', %(admin_super_password)s, 9, true)
-ON CONFLICT (username) DO UPDATE
-SET role = 9,
-    is_active = true,
-    updated_at = now();
-
 DELETE FROM camera_sources
 WHERE source_type <> 'rtsp'
    OR source_url !~* '^rtsps?://';
@@ -204,11 +197,21 @@ SET name = EXCLUDED.name,
     updated_at = now();
 """
 
+ADMIN_SUPER_SQL = """
+INSERT INTO accounts (username, email, password_hash, role, is_active)
+VALUES ('admin_super', 'admin_super@example.local', %(admin_super_password)s, 9, true)
+ON CONFLICT (username) DO UPDATE
+SET role = 9,
+    is_active = true,
+    updated_at = now();
+"""
+
 
 def main() -> None:
     with psycopg.connect(DSN) as conn:
         with conn.cursor() as cur:
-            cur.execute(SQL, {"admin_super_password": ADMIN_SUPER_PASSWORD})
+            cur.execute(SQL)
+            cur.execute(ADMIN_SUPER_SQL, {"admin_super_password": ADMIN_SUPER_PASSWORD})
         conn.commit()
     print("Initialized production event schema.")
 
