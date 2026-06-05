@@ -7,6 +7,9 @@ import type { Camera, CameraRuntime } from '@/lib/types';
 
 const STREAM_WIDTH = 1280;
 const STREAM_HEIGHT = 720;
+const RUNTIME_POLL_INTERVAL_MS = 2000;
+const MAX_SIMULTANEOUS_STREAMS = 2;
+const MAX_STREAM_RETRIES = 3;
 
 type LiveState = 'idle' | 'connecting' | 'running' | 'stopped' | 'error';
 type DisplayMode = 'fps' | 'stream';
@@ -40,7 +43,7 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
     }
 
     void loadRuntime();
-    const timer = window.setInterval(loadRuntime, 1000);
+    const timer = window.setInterval(loadRuntime, RUNTIME_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -98,10 +101,11 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
       </div>
 
       <div className={displayMode === 'fps' ? 'ops-camera-grid ops-camera-grid-fps' : 'ops-camera-grid ops-camera-grid-stream'}>
-        {visibleCameraIds.map((cameraId) => {
+        {visibleCameraIds.map((cameraId, index) => {
           const camera = cameras.find((item) => item.camera_id === cameraId);
           const runtime = runtimeByCamera[cameraId];
-          return displayMode === 'fps' ? (
+          const shouldOpenStream = displayMode === 'stream' && (cameraFilter !== 'all' || index < MAX_SIMULTANEOUS_STREAMS);
+          return displayMode === 'fps' || !shouldOpenStream ? (
             <CameraFpsCard key={cameraId} cameraId={cameraId} camera={camera} runtime={runtime} stats={streamStats[cameraId]} />
           ) : (
             <CameraStreamTile
@@ -189,18 +193,23 @@ function CameraStreamTile({
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualStoppedRef = useRef(false);
   const mountedRef = useRef(false);
+  const retryCountRef = useRef(0);
   const frameCounterRef = useRef({ count: 0, startedAt: 0 });
   const stats = { displayFps, state: liveState };
   const fps = getCameraFps(camera, runtime, stats);
 
   useEffect(() => {
     mountedRef.current = true;
-    void startStream();
+    if (camera?.is_active !== false) {
+      void startStream();
+    } else {
+      stopStream();
+    }
     return () => {
       mountedRef.current = false;
       stopStream();
     };
-  }, [cameraId, token]);
+  }, [cameraId, token, camera?.is_active]);
 
   useEffect(() => {
     onStats(cameraId, stats);
@@ -208,6 +217,10 @@ function CameraStreamTile({
 
   async function startStream() {
     stopStream(false);
+    if (camera?.is_active === false) {
+      setLiveState('stopped');
+      return;
+    }
     manualStoppedRef.current = false;
     setError('');
     setDisplayFps(0);
@@ -222,6 +235,7 @@ function CameraStreamTile({
       });
       if (!response.ok || !response.body) throw new Error(`MJPEG API lỗi: ${response.status}`);
       if (!mountedRef.current || controller.signal.aborted) return;
+      retryCountRef.current = 0;
       setLiveState('running');
       await drawMjpegStream(response.body, controller.signal, drawFrame);
     } catch (err) {
@@ -245,11 +259,14 @@ function CameraStreamTile({
       abortRef.current.abort();
       abortRef.current = null;
     }
-    setLiveState('stopped');
+    if (mountedRef.current) {
+      setLiveState('stopped');
+    }
   }
 
   function scheduleRetry() {
-    if (manualStoppedRef.current || retryTimerRef.current) return;
+    if (manualStoppedRef.current || retryTimerRef.current || retryCountRef.current >= MAX_STREAM_RETRIES) return;
+    retryCountRef.current += 1;
     retryTimerRef.current = setTimeout(() => {
       retryTimerRef.current = null;
       if (mountedRef.current && !manualStoppedRef.current) {
@@ -259,7 +276,12 @@ function CameraStreamTile({
   }
 
   async function drawFrame(blob: Blob) {
-    const bitmap = await createImageBitmap(blob);
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(blob);
+    } catch {
+      return;
+    }
     try {
       if (!mountedRef.current) return;
       const canvas = canvasRef.current;

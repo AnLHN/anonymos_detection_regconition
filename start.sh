@@ -25,6 +25,7 @@ fi
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 FRONTEND_READY_TIMEOUT="${FRONTEND_READY_TIMEOUT:-180}"
+FRONTEND_PREWARM_PATHS="${FRONTEND_PREWARM_PATHS:-/ /alerts /cameras /rules /employees /users /system /login}"
 NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-rapi-local}"
 export NEXT_DIST_DIR
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
@@ -157,6 +158,19 @@ wait_http_ready() {
   done
 }
 
+prewarm_frontend_routes() {
+  local base_url="$1"
+  local paths="$2"
+  if ! command -v curl >/dev/null 2>&1; then
+    return 0
+  fi
+  echo "[start] Prewarming frontend routes..."
+  local path
+  for path in $paths; do
+    curl -fsS --max-time 60 "$base_url$path" >/dev/null 2>&1 || true
+  done
+}
+
 stop_port_process() {
   local name="$1"
   local port="$2"
@@ -201,6 +215,7 @@ else
   start_process "frontend" "$RUNTIME_DIR/frontend.pid" npm run dev --prefix "$ROOT_DIR/frontend" -- --hostname "$FRONTEND_HOST" --port "$FRONTEND_PORT"
   wait_http_ready "frontend" "http://127.0.0.1:$FRONTEND_PORT/" "$RUNTIME_DIR/frontend.pid" "$FRONTEND_READY_TIMEOUT"
 fi
+prewarm_frontend_routes "http://127.0.0.1:$FRONTEND_PORT" "$FRONTEND_PREWARM_PATHS"
 
 echo "[start] Services are ready:"
 echo "[start] - Postgres: localhost:7001"
