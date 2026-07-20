@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import cv2
@@ -26,7 +26,7 @@ class RedisFramePublisher:
         annotated_jpeg = encode_jpeg(annotated_frame, self.jpeg_quality)
         payload = dict(meta)
         payload.setdefault("camera_id", camera_id)
-        payload.setdefault("created_at", datetime.now().isoformat(timespec="milliseconds"))
+        payload.setdefault("created_at", datetime.now(timezone.utc).isoformat(timespec="milliseconds"))
         pipe = self.client.pipeline()
         pipe.setex(raw_frame_key(camera_id), self.ttl_seconds, raw_jpeg)
         pipe.setex(annotated_frame_key(camera_id), self.ttl_seconds, annotated_jpeg)

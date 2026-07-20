@@ -7,7 +7,7 @@ from psycopg.errors import UniqueViolation
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel
 
-from backend.auth.login_events import read_login_events
+from backend.auth.login_events import delete_login_event, delete_login_events, read_login_events
 from backend.auth.security import CurrentUser, require_permission, role_name, role_permissions
 from backend.database.postgres import execute, fetch_all, fetch_one
 
@@ -17,14 +17,14 @@ require_user_create = require_permission("users:create")
 require_user_update = require_permission("users:update")
 require_user_delete = require_permission("users:delete")
 
-ALLOWED_ROLES = {0, 1, 5, 9}
+ALLOWED_ROLES = {5, 9}
 
 
 class UserCreate(BaseModel):
     username: str
     email: str | None = None
     password: str
-    role: int = 0
+    role: int = 5
     is_active: bool = True
 
 
@@ -57,6 +57,28 @@ def user_login_history(username: str, limit: int = 30, _current_user: CurrentUse
         raise HTTPException(status_code=404, detail="User not found")
     capped_limit = max(1, min(limit, 100))
     return read_login_events(username, capped_limit)
+
+
+@router.delete("/{username}/login-history")
+def clear_user_login_history(username: str, current_user: CurrentUser = Depends(require_user_delete)) -> dict[str, int | str]:
+    public_user_data = public_user(username)
+    if not public_user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    deleted = delete_login_events(username)
+    write_user_audit(current_user.username, "clear_user_login_history", username, {"deleted": deleted}, None)
+    return {"status": "ok", "deleted": deleted}
+
+
+@router.delete("/{username}/login-history/{event_id}")
+def delete_user_login_history_event(username: str, event_id: int, current_user: CurrentUser = Depends(require_user_delete)) -> dict[str, int | str]:
+    public_user_data = public_user(username)
+    if not public_user_data:
+        raise HTTPException(status_code=404, detail="User not found")
+    deleted = delete_login_event(username, event_id)
+    if deleted < 1:
+        raise HTTPException(status_code=404, detail="Login history event not found")
+    write_user_audit(current_user.username, "delete_user_login_history_event", username, {"event_id": event_id}, None)
+    return {"status": "ok", "deleted": deleted}
 
 
 @router.post("")

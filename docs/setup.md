@@ -79,7 +79,7 @@ URL mặc định:
 
 ```text
 Frontend local: http://localhost:3000
-Frontend LAN:   http://192.168.2.17:3000
+Frontend LAN:   http://192.168.2.182:3000
 Backend:        http://localhost:8000
 Prometheus:     http://localhost:9090
 RabbitMQ UI:    http://localhost:15672
@@ -124,7 +124,7 @@ python ai_worker/run_rtsp.py --camera-id door_67b --source "rtsp://user:password
 Git Bash/MSYS có thể đổi env `/api` thành Windows path `D:/Git/api`. Vì vậy `start.sh` dùng:
 
 ```text
-NEXT_PUBLIC_API_BASE=http://192.168.2.17:3000/api
+NEXT_PUBLIC_API_BASE=http://192.168.2.182:3000/api
 ```
 
 Frontend cũng normalize API base để fallback về `/api` nếu gặp Windows path hoặc `file:`.

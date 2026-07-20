@@ -91,7 +91,7 @@ Postgres:           localhost:7001
 Redis:              localhost:6379
 ```
 
-Trong LAN, thay `localhost` bằng IP máy chạy server, ví dụ `http://192.168.2.17`.
+Trong LAN, thay `localhost` bằng IP máy chạy server, ví dụ `http://192.168.2.182`.
 
 ## Thành Phần Production
 

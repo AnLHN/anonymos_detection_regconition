@@ -63,7 +63,8 @@ def main() -> None:
                             "rtsp_port": 554,
                             "username": "admin",
                             "channel": camera["channel"],
-                            "ai_interval": 0.7,
+                            "ai_interval": 0.0,
+                            "stream_publish_fps": 15.0,
                         }),
                     ),
                 )

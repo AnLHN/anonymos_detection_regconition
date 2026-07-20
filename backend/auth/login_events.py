@@ -1,5 +1,7 @@
 from fastapi import Request
+import psycopg
 
+from backend.config import POSTGRES_DSN
 from backend.database.postgres import execute, fetch_all
 
 
@@ -52,7 +54,7 @@ def read_login_events(username: str, limit: int) -> list[dict]:
     ensure_login_event_schema()
     return fetch_all(
         """
-        SELECT action, success, ip_address, user_agent, device_os, browser, location, isp, is_vpn, created_at
+        SELECT id, action, success, ip_address, user_agent, device_os, browser, location, isp, is_vpn, created_at
         FROM user_login_events
         WHERE username = %s
         ORDER BY created_at DESC
@@ -60,6 +62,32 @@ def read_login_events(username: str, limit: int) -> list[dict]:
         """,
         (username, limit),
     )
+
+
+def delete_login_event(username: str, event_id: int) -> int:
+    ensure_login_event_schema()
+    with psycopg.connect(POSTGRES_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM user_login_events
+                WHERE username = %s AND id = %s
+                """,
+                (username, event_id),
+            )
+            deleted = cur.rowcount
+        conn.commit()
+    return max(0, deleted)
+
+
+def delete_login_events(username: str) -> int:
+    ensure_login_event_schema()
+    with psycopg.connect(POSTGRES_DSN) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM user_login_events WHERE username = %s", (username,))
+            deleted = cur.rowcount
+        conn.commit()
+    return max(0, deleted)
 
 
 def request_ip(request: Request) -> str | None:

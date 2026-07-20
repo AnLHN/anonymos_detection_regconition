@@ -1,14 +1,12 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { createUser, deactivateUser, getUserLoginHistory, getUsers, updateUser } from '@/lib/api';
+import { clearUserLoginHistory, createUser, deactivateUser, deleteUserLoginHistoryEvent, getUserLoginHistory, getUsers, updateUser } from '@/lib/api';
 import type { UserAccount, UserLoginEvent } from '@/lib/types';
 
 const ROLE_OPTIONS = [
-  { value: 0, label: 'Chỉ xem', hint: 'Theo dõi dữ liệu, không can thiệp vận hành.' },
-  { value: 1, label: 'Trực ca', hint: 'Xử lý cảnh báo và theo dõi camera.' },
-  { value: 5, label: 'Quản trị', hint: 'Quản lý camera, rule, nhân sự và hệ thống.' },
-  { value: 9, label: 'Quyền tối cao', hint: 'Quản trị user và thao tác nhạy cảm.' },
+  { value: 5, label: 'Quản lý vận hành', hint: 'Quản lý camera, quy tắc, nhân sự và hệ thống.' },
+  { value: 9, label: 'Quản trị hệ thống', hint: 'Quản trị tài khoản và thao tác nhạy cảm.' },
 ];
 
 type UserModalMode = 'create' | 'edit' | null;
@@ -20,6 +18,7 @@ export default function UsersPanel({ token }: { token: string }) {
   const [activityTarget, setActivityTarget] = useState<UserAccount | null>(null);
   const [activityRows, setActivityRows] = useState<UserLoginEvent[]>([]);
   const [isActivityLoading, setIsActivityLoading] = useState(false);
+  const [isActivityDeleting, setIsActivityDeleting] = useState(false);
   const [modalMode, setModalMode] = useState<UserModalMode>(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -61,6 +60,19 @@ export default function UsersPanel({ token }: { token: string }) {
     setError('');
     try {
       setActivityRows(await getUserLoginHistory(token, user.username));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không tải được lịch sử đăng nhập');
+    } finally {
+      setIsActivityLoading(false);
+    }
+  }
+
+  async function reloadActivity() {
+    if (!activityTarget) return;
+    setIsActivityLoading(true);
+    setError('');
+    try {
+      setActivityRows(await getUserLoginHistory(token, activityTarget.username));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tải được lịch sử đăng nhập');
     } finally {
@@ -153,6 +165,40 @@ export default function UsersPanel({ token }: { token: string }) {
       await loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không tắt được tài khoản');
+    }
+  }
+
+  async function handleClearActivity() {
+    if (!activityTarget || !activityRows.length) return;
+    if (!window.confirm(`Xóa toàn bộ lịch sử đăng nhập của ${activityTarget.username}?`)) return;
+    setError('');
+    setMessage('');
+    setIsActivityDeleting(true);
+    try {
+      const result = await clearUserLoginHistory(token, activityTarget.username);
+      setActivityRows([]);
+      setMessage(`Đã xóa ${result.deleted} bản ghi lịch sử đăng nhập.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không xóa được lịch sử đăng nhập');
+    } finally {
+      setIsActivityDeleting(false);
+    }
+  }
+
+  async function handleDeleteActivityRow(row: UserLoginEvent) {
+    if (!activityTarget) return;
+    if (!window.confirm(`Xóa bản ghi ${actionLabel(row)} lúc ${formatDateTime(row.created_at)}?`)) return;
+    setError('');
+    setMessage('');
+    setIsActivityDeleting(true);
+    try {
+      await deleteUserLoginHistoryEvent(token, activityTarget.username, row.id);
+      setActivityRows((current) => current.filter((item) => item.id !== row.id));
+      setMessage('Đã xóa bản ghi lịch sử đăng nhập.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không xóa được bản ghi đăng nhập');
+    } finally {
+      setIsActivityDeleting(false);
     }
   }
 
@@ -262,23 +308,24 @@ export default function UsersPanel({ token }: { token: string }) {
       ) : null}
 
       {roleTarget ? (
-        <UserModal title={`Quản lý vai trò: ${roleTarget.username}`} kicker="Phân quyền" onClose={() => setRoleTarget(null)}>
+        <UserModal title={`Vai trò: ${roleTarget.username}`} kicker="Phân quyền" onClose={() => setRoleTarget(null)}>
           <form className="user-role-form" onSubmit={handleRoleUpdate}>
-            <p className="user-modal-note">Hệ thống hiện dùng một cấp quyền chính cho mỗi tài khoản. Chọn cấp quyền đúng với trách nhiệm vận hành.</p>
+            <p className="user-modal-note">Chọn đúng cấp quyền theo trách nhiệm vận hành của tài khoản.</p>
             <div className="role-choice-grid">
               {ROLE_OPTIONS.map((role) => (
                 <label className="role-choice" key={role.value}>
                   <input name="role" type="radio" value={role.value} defaultChecked={roleTarget.role === role.value} />
+                  <span className="role-choice-indicator" aria-hidden="true" />
                   <span>
-                    <strong>{role.label}</strong>
+                    <strong>{role.label}<em>Mức {role.value}</em></strong>
                     <small>{role.hint}</small>
                   </span>
                 </label>
               ))}
             </div>
             <div className="modal-actions">
-              <button type="submit" disabled={isSaving}>{isSaving ? 'Đang lưu' : 'Hoàn tất'}</button>
-              <button type="button" className="secondary" onClick={() => setRoleTarget(null)}>Đóng</button>
+              <button type="submit" disabled={isSaving}>{isSaving ? 'Đang lưu' : 'Lưu vai trò'}</button>
+              <button type="button" className="secondary" onClick={() => setRoleTarget(null)}>Hủy</button>
             </div>
           </form>
         </UserModal>
@@ -287,6 +334,15 @@ export default function UsersPanel({ token }: { token: string }) {
       {activityTarget ? (
         <UserModal title={`Lịch sử đăng nhập: ${activityTarget.username}`} kicker="Nhật ký truy cập" onClose={() => setActivityTarget(null)} wide>
           <div className="user-activity-modal">
+            <div className="login-history-toolbar">
+              <span>{activityRows.length} bản ghi gần nhất</span>
+              <div>
+                <button type="button" className="secondary" onClick={reloadActivity} disabled={isActivityLoading || isActivityDeleting}>Tải lại</button>
+                <button type="button" className="danger" onClick={handleClearActivity} disabled={!activityRows.length || isActivityLoading || isActivityDeleting}>
+                  {isActivityDeleting ? 'Đang xóa' : 'Xóa tất cả'}
+                </button>
+              </div>
+            </div>
             {isActivityLoading ? <p className="user-modal-note">Đang tải lịch sử đăng nhập...</p> : null}
             {!isActivityLoading && !activityRows.length ? (
               <p className="user-modal-note">Chưa có bản ghi login/logout cho tài khoản này từ lúc bật audit đăng nhập.</p>
@@ -302,17 +358,23 @@ export default function UsersPanel({ token }: { token: string }) {
                       <th>Vị trí</th>
                       <th>Thiết bị</th>
                       <th>VPN</th>
+                      <th>Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activityRows.map((row) => (
-                      <tr key={`${row.action}-${row.created_at}-${row.ip_address || 'unknown'}`}>
+                      <tr key={row.id}>
                         <td>{formatDateTime(row.created_at)}</td>
                         <td><span className={row.success ? 'login-action is-success' : 'login-action is-failed'}>{actionLabel(row)}</span></td>
                         <td>{row.ip_address || '-'}</td>
                         <td>{row.location || row.isp || 'Chưa xác định'}</td>
                         <td>{[row.device_os, row.browser].filter(Boolean).join(' / ') || shortUserAgent(row.user_agent)}</td>
                         <td><span className={row.is_vpn ? 'vpn-pill is-vpn' : row.is_vpn === false ? 'vpn-pill' : 'vpn-pill is-unknown'}>{vpnLabel(row.is_vpn)}</span></td>
+                        <td>
+                          <button type="button" className="danger login-history-delete" onClick={() => handleDeleteActivityRow(row)} disabled={isActivityDeleting}>
+                            Xóa
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -359,7 +421,8 @@ function RoleSelect({ name, defaultValue = 0 }: { name: string; defaultValue?: n
 }
 
 function roleLabel(role: number) {
-  return ROLE_OPTIONS.find((item) => item.value === role)?.label || 'Chỉ xem';
+  if (role >= 9) return 'Quản trị hệ thống';
+  return 'Quản lý vận hành';
 }
 
 function userInitial(username: string) {

@@ -120,7 +120,7 @@ URL mặc định:
 
 ```text
 Frontend local:      http://localhost:3000
-Frontend LAN:        http://192.168.2.17:3000
+Frontend LAN:        http://192.168.2.182:3000
 Backend health:      http://localhost:8000/system/health
 Qdrant HTTP:         http://localhost:7002
 MediaMTX WHEP:       http://localhost:8889
@@ -198,7 +198,8 @@ Reload camera có Redis cooldown để chống spam. Backend không spawn trực
 ## Những Sửa Đổi Quan Trọng Gần Đây
 
 - Frontend local dùng `NEXT_DIST_DIR=.next-rapi-local` để tránh cache `.next`/`.next-dev-local` bị kẹt quyền trên Windows.
-- `start.sh` dùng `NEXT_PUBLIC_API_BASE=http://192.168.2.17:3000/api` trong LAN mode để tránh Git Bash/MSYS đổi `/api` thành `D:/Git/api`.
+- `start.sh` dùng `NEXT_PUBLIC_API_BASE=http://192.168.2.182:3000/api` trong LAN mode để tránh Git Bash/MSYS đổi `/api` thành `D:/Git/api`.
+- InsightFace model cache mặc định nằm trong `models/insightface`. Khi chuyển máy, copy thư mục `models/` để tránh tải lại model; engine TensorRT hoặc artifact convert nên để trong `models/trt` hoặc `models/artifacts`.
 - `frontend/src/lib/config.ts` normalize API base, tự fallback về `/api` nếu gặp Windows path hoặc `file:`.
 - Camera reload có cooldown backend/frontend, tránh spam reload làm worker/backend bị nghẽn.
 - Users CRUD audit log đã convert `datetime/date` sang ISO string trước khi ghi JSONB.

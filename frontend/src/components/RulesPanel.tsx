@@ -1,394 +1,328 @@
 'use client';
 
-import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
-import { createRule, updateRule } from '@/lib/api';
-import { ruleDescription, ruleLevelText, ruleTitle } from '@/lib/ruleText';
+import { FormEvent, useMemo, useState } from 'react';
+import { updateRule } from '@/lib/api';
 import type { Rule } from '@/lib/types';
+import { translateZone, alertLevelText } from '@/lib/alertText';
 
-const WARNING_LEVELS = ['low', 'medium', 'high', 'critical'];
-
-type RuleModalMode = 'create' | 'edit' | null;
-type RuleField =
-  | { name: string; label: string; helper: string; type: 'number'; min?: number; step?: number; defaultValue: number }
-  | { name: string; label: string; helper: string; type: 'time'; defaultValue: string }
-  | { name: string; label: string; helper: string; type: 'list'; defaultValue: string[] };
-
-const RULE_FIELDS: Record<string, RuleField[]> = {
-  stable_unknown_face: [
-    {
-      name: 'stable_frames',
-      label: 'Số frame xác nhận người lạ',
-      helper: 'Tăng số này nếu camera hay báo nhầm khi người đi ngang quá nhanh.',
-      type: 'number',
-      min: 1,
-      step: 1,
-      defaultValue: 12,
-    },
-    {
-      name: 'cooldown_seconds',
-      label: 'Thời gian chờ giữa hai cảnh báo',
-      helper: 'Trong khoảng này, cùng một loại cảnh báo sẽ không bắn liên tục.',
-      type: 'number',
-      min: 0,
-      step: 30,
-      defaultValue: 300,
-    },
-  ],
-  unknown_outside_working_hours: [
-    {
-      name: 'start',
-      label: 'Giờ bắt đầu làm việc',
-      helper: 'Sau mốc này hệ thống xem là trong giờ vận hành.',
-      type: 'time',
-      defaultValue: '08:00',
-    },
-    {
-      name: 'end',
-      label: 'Giờ kết thúc làm việc',
-      helper: 'Sau mốc này người lạ sẽ được xem là ngoài giờ làm việc.',
-      type: 'time',
-      defaultValue: '17:30',
-    },
-    {
-      name: 'cooldown_seconds',
-      label: 'Thời gian chờ giữa hai cảnh báo',
-      helper: 'Giúp tránh spam cảnh báo khi cùng một người xuất hiện lâu.',
-      type: 'number',
-      min: 0,
-      step: 30,
-      defaultValue: 300,
-    },
-  ],
-  unknown_loitering_at_gate: [
-    {
-      name: 'frames',
-      label: 'Số frame đứng lâu tại cổng',
-      helper: 'Người lạ phải xuất hiện đủ số frame này tại cổng mới tạo cảnh báo.',
-      type: 'number',
-      min: 1,
-      step: 1,
-      defaultValue: 12,
-    },
-    {
-      name: 'gate_zones',
-      label: 'Khu vực cổng',
-      helper: 'Nhập từng khu vực, phân cách bằng dấu phẩy. Ví dụ: gate, lobby_gate.',
-      type: 'list',
-      defaultValue: ['gate'],
-    },
-    {
-      name: 'cooldown_seconds',
-      label: 'Thời gian chờ giữa hai cảnh báo',
-      helper: 'Giúp tránh tạo nhiều cảnh báo khi người lạ vẫn đứng cùng một chỗ.',
-      type: 'number',
-      min: 0,
-      step: 30,
-      defaultValue: 300,
-    },
-  ],
-  unknown_entered_restricted_area: [
-    {
-      name: 'restricted_zones',
-      label: 'Khu vực hạn chế',
-      helper: 'Nhập các vùng cần bảo vệ, phân cách bằng dấu phẩy. Ví dụ: server_room, warehouse.',
-      type: 'list',
-      defaultValue: ['restricted_area', 'server_room', 'warehouse'],
-    },
-    {
-      name: 'cooldown_seconds',
-      label: 'Thời gian chờ giữa hai cảnh báo',
-      helper: 'Giúp tránh spam khi cùng một người lạ còn trong vùng hạn chế.',
-      type: 'number',
-      min: 0,
-      step: 30,
-      defaultValue: 300,
-    },
-  ],
-  unverified_in_restricted_area: [
-    {
-      name: 'restricted_zones',
-      label: 'Khu vực hạn chế',
-      helper: 'Áp dụng cho người hệ thống chưa xác minh được danh tính.',
-      type: 'list',
-      defaultValue: ['restricted_area', 'server_room', 'warehouse'],
-    },
-    {
-      name: 'cooldown_seconds',
-      label: 'Thời gian chờ giữa hai cảnh báo',
-      helper: 'Giúp tránh spam khi camera chưa xác minh được một người trong nhiều frame.',
-      type: 'number',
-      min: 0,
-      step: 30,
-      defaultValue: 300,
-    },
-  ],
-};
+const WARNING_LEVELS = ['low', 'medium', 'high', 'critical'] as const;
+const OUTSIDE_HOURS_RULE = 'unknown_outside_working_hours';
+const RESTRICTED_RULE = 'unknown_entered_restricted_area';
+const GATE_RULE = 'unknown_loitering_at_gate';
+const STABLE_UNKNOWN_RULE = 'stable_unknown_face';
+const UNVERIFIED_RESTRICTED_RULE = 'unverified_in_restricted_area';
 
 export default function RulesPanel({
   token,
   rules,
   onRefresh,
-  canCreate = false,
   canUpdate = false,
 }: {
   token: string;
   rules: Rule[];
   onRefresh: () => Promise<void>;
-  canCreate?: boolean;
   canUpdate?: boolean;
 }) {
-  const [selected, setSelected] = useState<Rule | null>(null);
-  const [modalMode, setModalMode] = useState<RuleModalMode>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const modalRule = modalMode === 'edit' ? selected : null;
-  const selectedFields = useMemo(() => (modalRule ? RULE_FIELDS[modalRule.rule_code] || [] : []), [modalRule]);
 
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') closeModal();
-    }
-
-    if (modalMode) {
-      document.body.classList.add('modal-open');
-      window.addEventListener('keydown', closeOnEscape);
-    }
-
-    return () => {
-      document.body.classList.remove('modal-open');
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [modalMode]);
-
-  function openCreateModal() {
-    setSelected(null);
-    setModalMode('create');
-    setError('');
-    setMessage('');
-  }
-
-  function openEditModal(rule: Rule) {
-    setSelected(rule);
-    setModalMode('edit');
-    setError('');
-    setMessage('');
-  }
-
-  function closeModal() {
-    if (saving) return;
-    setModalMode(null);
-    setSelected(null);
-    setError('');
-  }
-
-  function closeFromBackdrop(event: MouseEvent<HTMLDivElement>) {
-    if (event.target === event.currentTarget) closeModal();
-  }
+  const operationRule = useMemo(() => findRule(rules, OUTSIDE_HOURS_RULE), [rules]);
+  const restrictedRule = useMemo(() => findRule(rules, RESTRICTED_RULE), [rules]);
+  const gateRule = useMemo(() => findRule(rules, GATE_RULE), [rules]);
+  const stableUnknownRule = useMemo(() => findRule(rules, STABLE_UNKNOWN_RULE), [rules]);
+  const unverifiedRestrictedRule = useMemo(() => findRule(rules, UNVERIFIED_RESTRICTED_RULE), [rules]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!modalRule) return;
+    if (!operationRule) {
+      setError('Không tìm thấy rule vận hành ngoài giờ.');
+      return;
+    }
+    setSaving(true);
     setError('');
     setMessage('');
-    setSaving(true);
     const formData = new FormData(event.currentTarget);
     try {
-      await updateRule(token, modalRule.rule_code, {
-        is_enabled: formData.get('is_enabled') === 'on',
-        warning_level: String(formData.get('warning_level') || '').trim(),
-        config: buildRuleConfig(modalRule.rule_code, formData, modalRule.config),
-      });
-      setModalMode(null);
-      setSelected(null);
-      setMessage('Đã lưu rule.');
+      const restrictedZones = splitList(String(formData.get('restricted_zones') || ''));
+      const gateZones = splitList(String(formData.get('gate_zones') || ''));
+
+      await Promise.all([
+        updateRule(token, operationRule.rule_code, {
+          is_enabled: formData.get('operation_is_enabled') === 'on',
+          warning_level: String(formData.get('operation_warning_level') || operationRule.warning_level).trim(),
+          config: {
+            ...(operationRule.config || {}),
+            start: String(formData.get('operation_start') || operationRule.config?.start || '08:00').trim(),
+            end: String(formData.get('operation_end') || operationRule.config?.end || '17:30').trim(),
+            cooldown_seconds: Number(formData.get('operation_cooldown_seconds') || operationRule.config?.cooldown_seconds || 300),
+          },
+        }),
+        ...(restrictedRule ? [
+          updateRule(token, restrictedRule.rule_code, {
+            is_enabled: formData.get('restricted_is_enabled') === 'on',
+            warning_level: String(formData.get('restricted_warning_level') || restrictedRule.warning_level).trim(),
+            config: {
+              ...(restrictedRule.config || {}),
+              restricted_zones: restrictedZones,
+              cooldown_seconds: Number(formData.get('restricted_cooldown_seconds') || restrictedRule.config?.cooldown_seconds || 300),
+            },
+          }),
+        ] : []),
+        ...(gateRule ? [
+          updateRule(token, gateRule.rule_code, {
+            is_enabled: formData.get('gate_is_enabled') === 'on',
+            warning_level: String(formData.get('gate_warning_level') || gateRule.warning_level).trim(),
+            config: {
+              ...(gateRule.config || {}),
+              gate_zones: gateZones,
+              frames: Number(formData.get('gate_frames') || gateRule.config?.frames || 12),
+              cooldown_seconds: Number(formData.get('gate_cooldown_seconds') || gateRule.config?.cooldown_seconds || 300),
+            },
+          }),
+        ] : []),
+        ...(stableUnknownRule ? [
+          updateRule(token, stableUnknownRule.rule_code, {
+            is_enabled: formData.get('stable_is_enabled') === 'on',
+            warning_level: String(formData.get('stable_warning_level') || stableUnknownRule.warning_level).trim(),
+            config: {
+              ...(stableUnknownRule.config || {}),
+              stable_seconds: Number(formData.get('stable_seconds') || stableUnknownRule.config?.stable_seconds || 1.5),
+              cooldown_seconds: Number(formData.get('stable_cooldown_seconds') || stableUnknownRule.config?.cooldown_seconds || 300),
+            },
+          }),
+        ] : []),
+        ...(unverifiedRestrictedRule ? [
+          updateRule(token, unverifiedRestrictedRule.rule_code, {
+            is_enabled: formData.get('restricted_is_enabled') === 'on',
+            warning_level: String(formData.get('restricted_warning_level') || unverifiedRestrictedRule.warning_level).trim(),
+            config: {
+              ...(unverifiedRestrictedRule.config || {}),
+              restricted_zones: restrictedZones,
+              cooldown_seconds: Number(formData.get('restricted_cooldown_seconds') || unverifiedRestrictedRule.config?.cooldown_seconds || 300),
+            },
+          }),
+        ] : []),
+      ]);
+      setMessage('Đã cập nhật thiết lập vận hành.');
       await onRefresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không lưu được rule');
+      setError(err instanceof Error ? err.message : 'Không lưu được thiết lập vận hành');
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError('');
-    setMessage('');
-    setSaving(true);
-    const formData = new FormData(event.currentTarget);
-    try {
-      await createRule(token, {
-        rule_code: String(formData.get('rule_code') || '').trim(),
-        name: String(formData.get('name') || '').trim(),
-        is_enabled: formData.get('is_enabled') === 'on',
-        warning_level: String(formData.get('warning_level') || '').trim(),
-        config: {},
-      });
-      setMessage('Đã thêm rule mới.');
-      setModalMode(null);
-      event.currentTarget.reset();
-      await onRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thêm được rule');
-    } finally {
-      setSaving(false);
-    }
+  if (!operationRule) {
+    return (
+      <article className="card rules-card">
+        <div className="section-heading compact-heading rules-page-heading">
+          <div>
+            <h2>Thiết lập vận hành</h2>
+            <p>Chưa có rule ngoài giờ để chỉnh sửa.</p>
+          </div>
+        </div>
+        <div className="detail-empty">Hệ thống chưa nạp được rule <strong>{OUTSIDE_HOURS_RULE}</strong> từ backend.</div>
+      </article>
+    );
   }
+
+  const start = String(operationRule.config?.start || '08:00');
+  const end = String(operationRule.config?.end || '17:30');
+  const cooldown = Number(operationRule.config?.cooldown_seconds || 300);
+  const restrictedZones = getStringList(restrictedRule?.config?.restricted_zones, ['restricted_area', 'server_room', 'warehouse']);
+  const gateZones = getStringList(gateRule?.config?.gate_zones, ['gate']);
+  const stableSeconds = Number(stableUnknownRule?.config?.stable_seconds || 1.5);
+  const stableCooldown = Number(stableUnknownRule?.config?.cooldown_seconds || 300);
+  const gateFrames = Number(gateRule?.config?.frames || 12);
+  const gateCooldown = Number(gateRule?.config?.cooldown_seconds || 300);
+  const restrictedCooldown = Number(restrictedRule?.config?.cooldown_seconds || 300);
+  const unverifiedCooldown = Number(unverifiedRestrictedRule?.config?.cooldown_seconds || 300);
 
   return (
-    <article className="card rules-card">
-      <div className="section-heading compact-heading rules-page-heading">
-        <div>
-          <h2>Quy tắc cảnh báo</h2>
-          <p>Chỉnh các ngưỡng vận hành bằng form trực quan, không cần thao tác JSON.</p>
-        </div>
-        {canCreate ? <button type="button" className="rule-add-button" onClick={openCreateModal}>
-          Thêm rule
-        </button> : null}
+    <article className="card rules-card operation-settings-card">
+      <div className="operation-summary-grid">
+        <article className="operation-summary-card">
+          <span>Khung giờ vận hành</span>
+          <strong>{start} - {end}</strong>
+        </article>
+        <article className="operation-summary-card">
+          <span>Người lạ mặc định</span>
+          <strong>{stableUnknownRule?.is_enabled ? `Báo sau ${stableSeconds}s` : 'Đang tắt'}</strong>
+        </article>
+        <article className="operation-summary-card">
+          <span>Vùng cảnh báo hạn chế</span>
+          <strong>{restrictedZones.map(translateZone).filter(Boolean).join(', ') || 'Chưa cấu hình'}</strong>
+        </article>
+        <article className="operation-summary-card">
+          <span>Khu vực cổng (Gate zone)</span>
+          <strong>{gateZones.map(translateZone).filter(Boolean).join(', ') || 'Chưa cấu hình'}</strong>
+        </article>
       </div>
 
-      {error && !modalMode ? <span className="error">{error}</span> : null}
-      {message ? <span className="success">{message}</span> : null}
-
-      <div className="list rule-list">
-        {rules.map((rule) => (
-          <button className="item item-button rule-item rule-list-item" type="button" key={rule.rule_code} onClick={() => canUpdate && openEditModal(rule)} disabled={!canUpdate}>
-            <strong>
-              <span>{ruleTitle(rule)}</span>
-              <span className="badge">{rule.is_enabled ? 'Đang bật' : 'Đang tắt'}</span>
-              <span className={`badge level-${rule.warning_level}`}>{ruleLevelText(rule.warning_level)}</span>
-            </strong>
-            <span>{ruleDescription(rule)}</span>
-          </button>
-        ))}
-      </div>
-
-      {modalMode ? (
-        <div className="rule-modal-backdrop" role="presentation" onMouseDown={closeFromBackdrop}>
-          <section className="rule-modal" role="dialog" aria-modal="true" aria-labelledby="rule-modal-title">
-            <div className="modal-header">
-              <div>
-                <span className="modal-kicker">{modalMode === 'edit' ? 'Chỉnh sửa rule' : 'Thêm rule mới'}</span>
-                <h2 id="rule-modal-title">{modalMode === 'edit' && modalRule ? ruleTitle(modalRule) : 'Thêm rule'}</h2>
-                {modalMode === 'edit' && modalRule ? <p>{ruleDescription(modalRule)}</p> : <p>Chỉ thêm rule khi rule engine đã có logic xử lý mã rule này.</p>}
-              </div>
-              <button type="button" className="modal-close" aria-label="Đóng cấu hình rule" onClick={closeModal} disabled={saving}>×</button>
+      <form className="compact-form operation-settings-form" onSubmit={handleSubmit}>
+        <div className="operation-layout-grid">
+          {/* Card 1: Quy tắc phát hiện người lạ (Đưa lên đầu) */}
+          <section className="operation-config-card">
+            <div className="operation-card-header">
+              <strong>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Quy tắc phát hiện người lạ
+              </strong>
             </div>
+            <div className="operation-settings-grid">
+              <label>
+                Xác nhận người lạ sau (giây)
+                <input name="stable_seconds" type="number" min={0.5} step={0.5} defaultValue={stableSeconds} />
+                <small>Thời gian theo dõi trước khi báo. Đặt 0.5s - 1.0s để báo ngay lập tức.</small>
+              </label>
+              <label>
+                Thời gian chờ người lạ (giây)
+                <input name="stable_cooldown_seconds" type="number" min={0} step={30} defaultValue={stableCooldown} />
+              </label>
+              <label>
+                Mức độ mặc định người lạ
+                <select name="stable_warning_level" defaultValue={stableUnknownRule?.warning_level || 'low'}>
+                  {WARNING_LEVELS.map((level) => <option key={level} value={level}>{alertLevelText(level)}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="operation-toggles-row">
+              {stableUnknownRule ? (
+                <label className="custom-switch">
+                  <input name="stable_is_enabled" type="checkbox" defaultChecked={stableUnknownRule.is_enabled} />
+                  <span className="switch-slider" />
+                  <span>Bật rule người lạ mặc định</span>
+                </label>
+              ) : null}
+            </div>
+          </section>
 
-            {modalMode === 'create' ? (
-              <form className="compact-form rule-editor rule-modal-form" onSubmit={handleCreate}>
-                <div className="rule-form-grid">
-                  <label>
-                    Mã rule
-                    <input name="rule_code" placeholder="custom_unknown_gate" required />
-                  </label>
-                  <label>
-                    Tên rule
-                    <input name="name" placeholder="Người lạ tại cổng phụ" required />
-                  </label>
-                  <label>
-                    Mức độ cảnh báo
-                    <select name="warning_level" defaultValue="medium">
-                      {WARNING_LEVELS.map((level) => <option key={level} value={level}>{ruleLevelText(level)}</option>)}
-                    </select>
-                  </label>
-                  <label className="inline-check rule-toggle"><input name="is_enabled" type="checkbox" defaultChecked /> Bật cảnh báo này</label>
-                </div>
-                <div className="rule-actions">
-                  <button type="submit" disabled={saving}>{saving ? 'Đang thêm...' : 'Thêm rule'}</button>
-                  <button type="button" className="secondary" onClick={closeModal} disabled={saving}>Hủy</button>
-                </div>
-                {error ? <span className="error">{error}</span> : null}
-              </form>
-            ) : modalRule ? (
-              <form className="compact-form rule-editor rule-modal-form" onSubmit={handleSubmit} key={modalRule.rule_code}>
-                <div className="rule-editor-strip">
-                  <div className="rule-toggle-field">
-                    <span>Trạng thái cảnh báo</span>
-                    <label className="inline-check rule-toggle"><input name="is_enabled" type="checkbox" defaultChecked={modalRule.is_enabled} /> Bật cảnh báo này</label>
-                  </div>
-                  <label className="rule-level-field">
-                    Mức độ cảnh báo
-                    <select name="warning_level" defaultValue={modalRule.warning_level}>
-                      {WARNING_LEVELS.map((level) => <option key={level} value={level}>{ruleLevelText(level)}</option>)}
-                    </select>
-                  </label>
-                </div>
+          {/* Card 2: Khung giờ hoạt động ngoài giờ */}
+          <section className="operation-config-card">
+            <div className="operation-card-header">
+              <strong>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                Khung giờ ngoài giờ
+              </strong>
+              <label className="custom-switch">
+                <input name="operation_is_enabled" type="checkbox" defaultChecked={operationRule.is_enabled} />
+                <span className="switch-slider" />
+                <span>Bật rule</span>
+              </label>
+            </div>
+            <div className="operation-settings-grid">
+              <label>
+                Bắt đầu giờ làm việc
+                <input name="operation_start" type="time" defaultValue={start} required />
+                <small>Trước mốc này, hệ thống coi là ngoài giờ.</small>
+              </label>
+              <label>
+                Kết thúc giờ làm việc
+                <input name="operation_end" type="time" defaultValue={end} required />
+                <small>Sau mốc này, người lạ ngoài giờ sẽ bị cảnh báo.</small>
+              </label>
+              <label>
+                Mức độ cảnh báo ngoài giờ
+                <select name="operation_warning_level" defaultValue={operationRule.warning_level}>
+                  {WARNING_LEVELS.map((level) => <option key={level} value={level}>{alertLevelText(level)}</option>)}
+                </select>
+              </label>
+              <label>
+                Thời gian chờ ngoài giờ (giây)
+                <input name="operation_cooldown_seconds" type="number" min={0} step={30} defaultValue={cooldown} />
+              </label>
+            </div>
+          </section>
 
-                {selectedFields.length ? (
-                  <div className="rule-visual-config">
-                    {selectedFields.map((field) => <RuleConfigField key={field.name} field={field} config={modalRule.config || {}} />)}
-                  </div>
-                ) : (
-                  <div className="detail-empty">Rule tùy chỉnh này chưa có form cấu hình riêng. Có thể bật/tắt và đổi mức cảnh báo, config hiện tại sẽ được giữ nguyên.</div>
-                )}
-
-                <div className="rule-actions">
-                  <button type="submit" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu rule'}</button>
-                  <button type="button" className="secondary" onClick={closeModal} disabled={saving}>Hủy</button>
-                </div>
-                {error ? <span className="error">{error}</span> : null}
-              </form>
-            ) : null}
+          {/* Card 3: Vùng cảnh báo và khu vực cổng (Chuyển xuống dưới và rộng ra) */}
+          <section className="operation-config-card operation-config-card-wide">
+            <div className="operation-card-header">
+              <strong>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10S2 17.523 2 12A10 10 0 0 1 12 2z"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+                Vùng cảnh báo & Khu vực cổng
+              </strong>
+            </div>
+            <div className="operation-settings-grid">
+              <label>
+                Danh sách vùng cảnh báo
+                <input name="restricted_zones" defaultValue={restrictedZones.join(', ')} placeholder="restricted_area, server_room" />
+                <small>Khớp với các vùng (zone/ROI) được vẽ trên camera.</small>
+              </label>
+              <label>
+                Khu vực cổng (Gate zones)
+                <input name="gate_zones" defaultValue={gateZones.join(', ')} placeholder="gate, lobby_gate" />
+                <small>Dùng cho rule đứng lâu tại khu vực cổng.</small>
+              </label>
+              <label>
+                Mức độ cảnh báo vùng
+                <select name="restricted_warning_level" defaultValue={restrictedRule?.warning_level || 'critical'}>
+                  {WARNING_LEVELS.map((level) => <option key={level} value={level}>{alertLevelText(level)}</option>)}
+                </select>
+              </label>
+              <label>
+                Thời gian chờ vùng (giây)
+                <input name="restricted_cooldown_seconds" type="number" min={0} step={30} defaultValue={restrictedCooldown} />
+              </label>
+              <label>
+                Số khung hình đứng lâu tại cổng
+                <input name="gate_frames" type="number" min={1} step={1} defaultValue={gateFrames} />
+              </label>
+              <label>
+                Mức độ cảnh báo cổng
+                <select name="gate_warning_level" defaultValue={gateRule?.warning_level || 'medium'}>
+                  {WARNING_LEVELS.map((level) => <option key={level} value={level}>{alertLevelText(level)}</option>)}
+                </select>
+              </label>
+              <label>
+                Thời gian chờ cổng (giây)
+                <input name="gate_cooldown_seconds" type="number" min={0} step={30} defaultValue={gateCooldown} />
+              </label>
+            </div>
+            <div className="operation-toggles-row">
+              {restrictedRule ? (
+                <label className="custom-switch">
+                  <input name="restricted_is_enabled" type="checkbox" defaultChecked={restrictedRule.is_enabled} />
+                  <span className="switch-slider" />
+                  <span>Bật vùng cảnh báo hạn chế</span>
+                </label>
+              ) : null}
+              {gateRule ? (
+                <label className="custom-switch">
+                  <input name="gate_is_enabled" type="checkbox" defaultChecked={gateRule.is_enabled} />
+                  <span className="switch-slider" />
+                  <span>Bật rule đứng lâu tại cổng</span>
+                </label>
+              ) : null}
+            </div>
           </section>
         </div>
-      ) : null}
+
+        <div className="operation-settings-actions">
+          <div className="rule-actions">
+            <button type="submit" disabled={saving || !canUpdate}>{saving ? 'Đang lưu...' : 'Lưu thiết lập'}</button>
+          </div>
+        </div>
+
+        {error ? <span className="error" style={{ display: 'block', marginTop: '12px' }}>{error}</span> : null}
+        {message ? <span className="success" style={{ display: 'block', marginTop: '12px' }}>{message}</span> : null}
+      </form>
     </article>
   );
+
 }
 
-function RuleConfigField({ field, config }: { field: RuleField; config: Record<string, unknown> }) {
-  const value = config[field.name];
-  const defaultValue = field.type === 'list'
-    ? listToText(Array.isArray(value) ? value : field.defaultValue)
-    : value ?? field.defaultValue;
-
-  return (
-    <label className="rule-config-field">
-      <span>{field.label}</span>
-      {field.type === 'list' ? (
-        <input name={`config_${field.name}`} defaultValue={String(defaultValue)} placeholder={field.defaultValue.join(', ')} />
-      ) : (
-        <input
-          name={`config_${field.name}`}
-          type={field.type}
-          min={field.type === 'number' ? field.min : undefined}
-          step={field.type === 'number' ? field.step : undefined}
-          defaultValue={String(defaultValue)}
-        />
-      )}
-      <small>{field.helper}</small>
-    </label>
-  );
+function findRule(rules: Rule[], ruleCode: string) {
+  return rules.find((rule) => rule.rule_code === ruleCode) || null;
 }
 
-function buildRuleConfig(ruleCode: string, formData: FormData, fallback: Record<string, unknown>) {
-  const fields = RULE_FIELDS[ruleCode] || [];
-  if (!fields.length) {
-    return fallback || {};
+function getStringList(value: unknown, fallback: string[]) {
+  if (!Array.isArray(value)) {
+    return fallback;
   }
-
-  const config: Record<string, unknown> = {};
-  fields.forEach((field) => {
-    const raw = String(formData.get(`config_${field.name}`) || '').trim();
-    if (field.type === 'number') {
-      config[field.name] = Number(raw || field.defaultValue);
-      return;
-    }
-    if (field.type === 'list') {
-      config[field.name] = splitList(raw || field.defaultValue.join(','));
-      return;
-    }
-    config[field.name] = raw || field.defaultValue;
-  });
-
-  return config;
+  return value.map((item) => String(item)).filter(Boolean);
 }
 
 function splitList(value: string) {
   return value.split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-function listToText(value: unknown[]) {
-  return value.map((item) => String(item)).join(', ');
 }

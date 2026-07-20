@@ -1,11 +1,11 @@
 import type { Alert } from './types';
 
 const WARNING_TEXT: Record<string, string> = {
-  stable_unknown_face: 'Người lạ được phát hiện nhiều lần',
-  unknown_outside_working_hours: 'Người lạ xuất hiện ngoài giờ làm việc',
-  unknown_loitering_at_gate: 'Người lạ đứng lâu tại khu vực cổng',
-  unknown_entered_restricted_area: 'Người lạ đi vào khu vực hạn chế',
-  unverified_in_restricted_area: 'Người chưa xác minh đi vào khu vực hạn chế',
+  stable_unknown_face: 'Phát hiện người lạ',
+  unknown_outside_working_hours: 'Người lạ ngoài giờ',
+  unknown_loitering_at_gate: 'Đứng lâu ở cổng',
+  unknown_entered_restricted_area: 'Vào vùng hạn chế',
+  unverified_in_restricted_area: 'Chưa xác minh vào vùng hạn chế',
 };
 
 const LEVEL_TEXT: Record<string, string> = {
@@ -23,13 +23,32 @@ const REVIEW_TEXT: Record<string, string> = {
   ignored: 'Bỏ qua',
 };
 
+const ZONE_TRANSLATIONS: Record<string, string> = {
+  restricted_area: 'Khu vực hạn chế',
+  server_room: 'Phòng máy chủ',
+  warehouse: 'Kho hàng',
+  gate: 'Cổng',
+  lobby_gate: 'Cổng sảnh',
+  lobby: 'Sảnh',
+};
+
+export function translateZone(zone: string): string {
+  if (!zone || zone === 'none') return '';
+  const trimmed = zone.trim();
+  return ZONE_TRANSLATIONS[trimmed] || humanizeCode(trimmed);
+}
+
 export function alertTitle(alert: Alert) {
   return WARNING_TEXT[alert.warning_type] || humanizeCode(alert.warning_type || alert.status || 'Cảnh báo an ninh');
 }
 
+export function warningTypeText(type: string) {
+  return WARNING_TEXT[type] || humanizeCode(type || 'Cảnh báo khác');
+}
+
 export function alertSummary(alert: Alert) {
-  const zone = alert.zone && alert.zone !== 'none' ? ` tại ${humanizeCode(alert.zone)}` : '';
-  return `${alert.camera_id}${zone} · ${reviewText(alert.review_status)}`;
+  const zone = alert.zone && alert.zone !== 'none' ? ` tại ${translateZone(alert.zone)}` : '';
+  return `${alert.camera_id}${zone}`;
 }
 
 export function alertLevelText(level: string) {
@@ -41,9 +60,50 @@ export function reviewText(status: string) {
 }
 
 export function alertDetailReason(alert: Alert) {
-  return alert.reason || alertTitle(alert);
+  return translateReason(alert.reason) || alertTitle(alert);
+}
+
+export function translateReason(reason?: string | null): string {
+  if (!reason) return '';
+  
+  // Track 355 stayed unknown for at least 1.5s
+  let match = reason.match(/Track (\d+) stayed unknown for at least ([\d.]+)s/i);
+  if (match) {
+    return `Đối tượng (Track ${match[1]}) duy trì trạng thái người lạ quá ${match[2]} giây.`;
+  }
+  
+  // Unknown track 355 entered restricted zone warehouse
+  match = reason.match(/Unknown track (\d+) entered restricted zone (\w+)/i);
+  if (match) {
+    return `Người lạ (Track ${match[1]}) đã đi vào khu vực hạn chế: ${translateZone(match[2])}.`;
+  }
+  
+  // Unknown track 355 appeared outside working hours
+  match = reason.match(/Unknown track (\d+) appeared outside working hours/i);
+  if (match) {
+    return `Người lạ (Track ${match[1]}) xuất hiện ngoài giờ làm việc.`;
+  }
+  
+  // Unknown track 355 stayed in gate zone for 12 processed frames
+  match = reason.match(/Unknown track (\d+) stayed in gate zone for (\d+) processed frames/i);
+  if (match) {
+    return `Người lạ (Track ${match[1]}) đứng lâu tại khu vực cổng (${match[2]} khung hình).`;
+  }
+  
+  // Unverified track 355 appeared in restricted zone server_room
+  match = reason.match(/Unverified track (\d+) appeared in restricted zone (\w+)/i);
+  if (match) {
+    return `Đối tượng chưa xác minh (Track ${match[1]}) đi vào khu vực hạn chế: ${translateZone(match[2])}.`;
+  }
+  
+  return reason;
 }
 
 function humanizeCode(value: string) {
-  return value.replaceAll('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+  return value
+    .replaceAll('_', ' ')
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
+

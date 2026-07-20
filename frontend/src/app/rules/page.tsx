@@ -13,7 +13,6 @@ export default function RulesPage() {
         token={token}
         rules={rules}
         onRefresh={refresh}
-        canCreate={hasPermission(currentUser, 'rules:create')}
         canUpdate={hasPermission(currentUser, 'rules:update')}
       />
     </section>

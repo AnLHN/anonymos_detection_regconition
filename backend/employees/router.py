@@ -107,17 +107,7 @@ def enroll_employee_from_camera(payload: EmployeeEnrollRequest, _current_user=De
 
 @router.get("/{employee_id}")
 def get_employee(employee_id: int, _current_user=Depends(require_employee_read)) -> dict:
-    employee = fetch_one(
-        """
-        SELECT id, emp_code, name, department, photo_path, is_active
-        FROM employees
-        WHERE id = %s
-        """,
-        (employee_id,),
-    )
-    if not employee:
-        raise HTTPException(status_code=404, detail="Employee not found")
-    return employee
+    return fetch_employee(employee_id)
 
 
 def is_good_enrollment_face(face: FaceEmbedding) -> bool:
@@ -173,3 +163,17 @@ def deactivate_employee(employee_id: int) -> None:
         with conn.cursor() as cur:
             cur.execute("UPDATE employees SET is_active = false, updated_at = now() WHERE id = %s", (employee_id,))
         conn.commit()
+
+
+def fetch_employee(employee_id: int) -> dict:
+    employee = fetch_one(
+        """
+        SELECT id, emp_code, name, department, photo_path, is_active
+        FROM employees
+        WHERE id = %s
+        """,
+        (employee_id,),
+    )
+    if not employee:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return employee

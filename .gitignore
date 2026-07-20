@@ -27,6 +27,11 @@ storage/debug_faces/*
 data/exports/*.json
 !data/exports/.gitkeep
 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
 # Local Claude/project state
 .claude/
 
@@ -42,3 +47,9 @@ Thumbs.db
 # Model/cache artifacts
 models/
 .insightface/
+
+# Test/temp images
+*.jpg
+*.jpeg
+*.png
+!storage/**/*

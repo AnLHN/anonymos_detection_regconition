@@ -12,3 +12,4 @@ uvicorn
 prometheus-client
 redis
 pika
+supervision>=0.25,<0.27

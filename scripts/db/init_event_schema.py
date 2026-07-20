@@ -3,7 +3,7 @@ import os
 import psycopg
 
 DSN = os.getenv("POSTGRES_DSN", "host=localhost port=7001 dbname=face_db user=face_user password=face_password")
-ADMIN_SUPER_PASSWORD = os.getenv("ADMIN_SUPER_PASSWORD", "change-me-admin-super")
+ADMIN_SUPER_PASSWORD = os.getenv("ADMIN_SUPER_PASSWORD", "ntc123!@#")
 
 SQL = """
 CREATE TABLE IF NOT EXISTS employees (
@@ -152,6 +152,9 @@ ALTER TABLE unknown_events
 ALTER TABLE unknown_events
     ADD COLUMN IF NOT EXISTS detection_threshold DOUBLE PRECISION;
 
+ALTER TABLE employees
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT now();
+
 ALTER TABLE accounts
     ADD COLUMN IF NOT EXISTS email TEXT,
     ADD COLUMN IF NOT EXISTS role SMALLINT NOT NULL DEFAULT 0,
@@ -163,11 +166,19 @@ UPDATE accounts
 SET role = 0
 WHERE role IS NULL;
 
+DELETE FROM accounts older
+USING accounts newer
+WHERE older.username = newer.username
+  AND older.ctid < newer.ctid;
+
 CREATE SEQUENCE IF NOT EXISTS accounts_id_seq;
 SELECT setval('accounts_id_seq', COALESCE((SELECT MAX(id) FROM accounts), 0) + 1, false);
 ALTER TABLE accounts
     ALTER COLUMN id SET DEFAULT nextval('accounts_id_seq'),
     ALTER COLUMN role SET DEFAULT 0;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_username_unique
+ON accounts (username);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email_unique
 ON accounts (email)
@@ -185,7 +196,7 @@ ALTER TABLE camera_sources
 
 INSERT INTO alert_rules (rule_code, name, warning_level, config)
 VALUES
-    ('stable_unknown_face', 'Stable unknown face', 'low', '{"stable_frames": 12, "cooldown_seconds": 300}'::jsonb),
+    ('stable_unknown_face', 'Stable unknown face', 'low', '{"stable_seconds": 1.5, "legacy_stable_frames": 12, "cooldown_seconds": 300}'::jsonb),
     ('unknown_outside_working_hours', 'Unknown outside working hours', 'high', '{"start": "08:00", "end": "17:30", "cooldown_seconds": 180}'::jsonb),
     ('unknown_loitering_at_gate', 'Unknown loitering at gate', 'medium', '{"gate_zones": ["gate"], "frames": 12, "cooldown_seconds": 180}'::jsonb),
     ('unknown_entered_restricted_area', 'Unknown entered restricted area', 'critical', '{"restricted_zones": ["restricted_area", "server_room", "warehouse"], "cooldown_seconds": 60}'::jsonb),
@@ -203,7 +214,8 @@ VALUES ('admin_super', 'admin_super@example.local', %(admin_super_password)s, 9,
 ON CONFLICT (username) DO UPDATE
 SET role = 9,
     is_active = true,
-    updated_at = now();
+    password_hash = EXCLUDED.password_hash,
+                                                                                                                                                                                                                                                                                                                                                                    updated_at = now();
 """
 
 

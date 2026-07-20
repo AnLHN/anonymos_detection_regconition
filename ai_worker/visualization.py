@@ -17,7 +17,8 @@ def draw_tracks(frame, tracks, scale_x: float = 1.0, scale_y: float = 1.0) -> No
         y1, y2 = int(track.bbox[1] * scale_y), int(track.bbox[3] * scale_y)
         score = track.best_score()
         score_text = "" if score is None else f" {score:.3f}"
+        quality_text = track.latest_face_quality_text() if status == "unverified" else ""
         zone_text = "" if track.zone == "none" else f" [{track.zone}]"
-        label = f"ID {track.track_id}: {track.voted_label()}{score_text}{zone_text}"
+        label = f"ID {track.track_id}: {track.voted_label()}{score_text}{quality_text}{zone_text}"
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
         cv2.putText(frame, label, (x1, max(20, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)

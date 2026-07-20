@@ -25,7 +25,7 @@ export default function EmployeesList({ employees }: { employees: Employee[] }) 
   const [formError, setFormError] = useState('');
   const [formMessage, setFormMessage] = useState('');
   const activeCameras = useMemo(() => cameras.filter((camera) => camera.source_type === 'rtsp' && camera.is_active), [cameras]);
-  const canManageEmployees = hasPermission(currentUser, 'employees:create');
+  const canEnrollEmployees = hasPermission(currentUser, 'employees:create');
   const departments = useMemo(() => [...new Set(employees.map((employee) => employee.department).filter(Boolean))].sort(), [employees]);
   const filteredEmployees = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -42,6 +42,8 @@ export default function EmployeesList({ employees }: { employees: Employee[] }) 
   const start = pageSize === 'all' ? 0 : currentPage * effectivePageSize;
   const end = pageSize === 'all' ? filteredEmployees.length : Math.min(start + effectivePageSize, filteredEmployees.length);
   const visibleEmployees = useMemo(() => filteredEmployees.slice(start, end), [filteredEmployees, start, end]);
+  const activeEmployeesCount = employees.filter((employee) => employee.is_active).length;
+  const departmentCount = departments.length;
 
   useEffect(() => {
     setPage(0);
@@ -87,6 +89,19 @@ export default function EmployeesList({ employees }: { employees: Employee[] }) 
 
   return (
     <div className="employee-workspace">
+      <section className="page-hero page-hero-employees">
+        <div className="page-hero-copy">
+          <span className="page-eyebrow">Dữ liệu đối chiếu</span>
+          <h2>Kho nhân viên nhận diện</h2>
+          <p>Tập trung quản lý dữ liệu khuôn mặt, nhân sự và tình trạng sử dụng để việc enroll, tìm kiếm và test vận hành dễ theo dõi hơn.</p>
+        </div>
+        <div className="page-hero-metrics">
+          <article className="page-kpi page-kpi-primary"><strong>{employees.length}</strong><span>Tổng hồ sơ</span></article>
+          <article className="page-kpi page-kpi-success"><strong>{activeEmployeesCount}</strong><span>Đang nhận diện</span></article>
+          <article className="page-kpi page-kpi-amber"><strong>{departmentCount}</strong><span>Phòng ban</span></article>
+        </div>
+      </section>
+
       <div className="filter-bar employee-filter-bar">
         <label>
           Tìm nhân viên
@@ -109,8 +124,8 @@ export default function EmployeesList({ employees }: { employees: Employee[] }) 
         </label>
       </div>
 
-      <div className={`employee-main-grid ${canManageEmployees ? '' : 'without-enroll'}`}>
-        {canManageEmployees ? (
+      <div className={`employee-main-grid ${canEnrollEmployees ? '' : 'without-enroll'}`}>
+        {canEnrollEmployees ? (
           <form className="compact-form employee-enroll-form employee-enroll-panel" onSubmit={handleEnroll}>
             <div className="rule-editor-heading">
               <strong>Thêm nhân viên bằng camera</strong>
@@ -161,7 +176,10 @@ export default function EmployeesList({ employees }: { employees: Employee[] }) 
           <div className="list employee-list">
             {visibleEmployees.length ? visibleEmployees.map((employee) => (
               <div className="item employee-item" key={employee.id}>
-                <strong>{employee.name}</strong>
+                <div className="employee-item-heading">
+                  <strong>{employee.name}</strong>
+                  <span className="badge">{employee.is_active ? 'Đang hoạt động' : 'Tạm khóa'}</span>
+                </div>
                 <span>Mã NV: {employee.emp_code || 'N/A'}</span>
                 <span>Phòng ban: {employee.department || 'Chưa có phòng ban'}</span>
               </div>

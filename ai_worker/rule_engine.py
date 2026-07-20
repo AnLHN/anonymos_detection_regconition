@@ -12,6 +12,7 @@ from config import (
     UNKNOWN_ALERT_COOLDOWN_SECONDS,
     UNKNOWN_GATE_WARNING_FRAMES,
     UNKNOWN_STABLE_FRAMES,
+    UNKNOWN_STABLE_SECONDS,
     WORKING_HOUR_END,
     WORKING_HOUR_START,
 )
@@ -37,6 +38,9 @@ class AlertRule:
 
     def get_int(self, key: str, default: int) -> int:
         return int(self.config.get(key, default))
+
+    def get_float(self, key: str, default: float) -> float:
+        return float(self.config.get(key, default))
 
     def get_str(self, key: str, default: str) -> str:
         return str(self.config.get(key, default))
@@ -67,7 +71,11 @@ DEFAULT_RULES = {
     "stable_unknown_face": AlertRule(
         rule_code="stable_unknown_face",
         warning_level="low",
-        config={"stable_frames": UNKNOWN_STABLE_FRAMES, "cooldown_seconds": UNKNOWN_ALERT_COOLDOWN_SECONDS},
+        config={
+            "stable_seconds": UNKNOWN_STABLE_SECONDS,
+            "legacy_stable_frames": UNKNOWN_STABLE_FRAMES,
+            "cooldown_seconds": UNKNOWN_ALERT_COOLDOWN_SECONDS,
+        },
     ),
     "unverified_in_restricted_area": AlertRule(
         rule_code="unverified_in_restricted_area",
@@ -113,13 +121,18 @@ class RuleEngine:
             )
 
         rule = self.rules["stable_unknown_face"]
-        stable_frames = rule.get_int("stable_frames", UNKNOWN_STABLE_FRAMES)
-        unknown_count = count_status(track, "unknown")
+        stable_seconds = rule.get_float("stable_seconds", UNKNOWN_STABLE_SECONDS)
+        now_seconds = current_time.timestamp()
         known_count = count_status(track, "known")
-        if rule.is_enabled and status == "unknown" and unknown_count >= stable_frames and known_count == 0:
+        if (
+            rule.is_enabled
+            and not track.unknown_alert_sent
+            and track.is_unknown_stable(now_seconds, stable_seconds)
+            and known_count == 0
+        ):
             return alert_decision(
                 rule,
-                reason=f"Track {track.track_id} stayed unknown for {unknown_count}/{len(track.history)} processed frames",
+                reason=f"Track {track.track_id} stayed unknown for at least {stable_seconds:.1f}s",
             )
 
         rule = self.rules["unverified_in_restricted_area"]

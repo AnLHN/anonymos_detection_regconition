@@ -1,14 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCameraRuntime } from '@/lib/api';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { getCameraMeta, getCameraRuntime, getCameraZones, updateCameraZones } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
-import type { Camera, CameraRuntime } from '@/lib/types';
+import type { Camera, CameraRuntime, CameraRuntimeTrack, CameraZones, CurrentUser, ZonePoint } from '@/lib/types';
 
 const STREAM_WIDTH = 1280;
 const STREAM_HEIGHT = 720;
 const RUNTIME_POLL_INTERVAL_MS = 2000;
-const MAX_SIMULTANEOUS_STREAMS = 2;
+const OVERLAY_META_POLL_INTERVAL_MS = 350;
 const MAX_STREAM_RETRIES = 3;
 
 type LiveState = 'idle' | 'connecting' | 'running' | 'stopped' | 'error';
@@ -19,11 +19,12 @@ type StreamStats = {
   state: LiveState;
 };
 
-export default function LiveMonitor({ token, cameras }: { token: string; cameras: Camera[] }) {
+export default function LiveMonitor({ token, cameras, currentUser }: { token: string; cameras: Camera[]; currentUser?: CurrentUser | null }) {
   const [displayMode, setDisplayMode] = useState<DisplayMode>('stream');
   const [cameraFilter, setCameraFilter] = useState('all');
   const [streamStats, setStreamStats] = useState<Record<string, StreamStats>>({});
   const [runtimeByCamera, setRuntimeByCamera] = useState<Record<string, CameraRuntime>>({});
+  const canEditZones = Number(currentUser?.role || 0) >= 9;
   const rtspCameras = useMemo(() => cameras.filter((camera) => camera.source_type === 'rtsp' && camera.is_active), [cameras]);
   const cameraSlots = useMemo(() => rtspCameras.map((camera) => camera.camera_id), [rtspCameras]);
   const cameraSlotsKey = cameraSlots.join('|');
@@ -60,25 +61,12 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
     cameraFilter === 'all' ? cameraSlots : cameraSlots.filter((cameraId) => cameraId === cameraFilter)
   ), [cameraFilter, cameraSlots]);
 
-  const connectedCount = cameraSlots.filter((cameraId) => (
-    isCameraConnected(cameras.find((item) => item.camera_id === cameraId), runtimeByCamera[cameraId], streamStats[cameraId])
-  )).length;
-  const pipelineCount = cameraSlots.filter((cameraId) => (
-    isPipelineRunning(cameras.find((item) => item.camera_id === cameraId), runtimeByCamera[cameraId], streamStats[cameraId])
-  )).length;
-
   const updateTileStats = useCallback((cameraId: string, stats: StreamStats) => {
     setStreamStats((current) => ({ ...current, [cameraId]: stats }));
   }, []);
 
   return (
     <section className="ops-camera-center">
-      <div className="ops-camera-stats">
-        <CameraSummary label="Tổng luồng" value={cameraSlots.length} />
-        <CameraSummary label="Đang kết nối" value={connectedCount} />
-        <CameraSummary label="Pipeline đang chạy" value={pipelineCount} />
-      </div>
-
       <div className="ops-camera-toolbar">
         <label>
           Hiển thị
@@ -101,11 +89,10 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
       </div>
 
       <div className={displayMode === 'fps' ? 'ops-camera-grid ops-camera-grid-fps' : 'ops-camera-grid ops-camera-grid-stream'}>
-        {visibleCameraIds.map((cameraId, index) => {
+        {visibleCameraIds.map((cameraId) => {
           const camera = cameras.find((item) => item.camera_id === cameraId);
           const runtime = runtimeByCamera[cameraId];
-          const shouldOpenStream = displayMode === 'stream' && (cameraFilter !== 'all' || index < MAX_SIMULTANEOUS_STREAMS);
-          return displayMode === 'fps' || !shouldOpenStream ? (
+          return displayMode === 'fps' ? (
             <CameraFpsCard key={cameraId} cameraId={cameraId} camera={camera} runtime={runtime} stats={streamStats[cameraId]} />
           ) : (
             <CameraStreamTile
@@ -115,6 +102,7 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
               camera={camera}
               runtime={runtime}
               onStats={updateTileStats}
+              canEditZones={canEditZones}
             />
           );
         })}
@@ -126,15 +114,6 @@ export default function LiveMonitor({ token, cameras }: { token: string; cameras
         ) : null}
       </div>
     </section>
-  );
-}
-
-function CameraSummary({ label, value }: { label: string; value: number }) {
-  return (
-    <article className="ops-camera-summary">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
   );
 }
 
@@ -159,6 +138,7 @@ function CameraFpsCard({ cameraId, camera, runtime, stats }: { cameraId: string;
         <span>Nhận diện thời gian thực</span>
         <strong>{detectionSummary(camera, runtime)}</strong>
       </footer>
+      <DetectionList runtime={runtime} />
     </article>
   );
 }
@@ -178,16 +158,26 @@ function CameraStreamTile({
   camera,
   runtime,
   onStats,
+  canEditZones,
 }: {
   token: string;
   cameraId: string;
   camera?: Camera;
   runtime?: CameraRuntime;
   onStats: (cameraId: string, stats: StreamStats) => void;
+  canEditZones: boolean;
 }) {
   const [liveState, setLiveState] = useState<LiveState>('idle');
   const [displayFps, setDisplayFps] = useState(0);
   const [error, setError] = useState('');
+  const [overlayRuntime, setOverlayRuntime] = useState<CameraRuntime | undefined>(runtime);
+  const [zoneEditorOpen, setZoneEditorOpen] = useState(false);
+  const [zones, setZones] = useState<CameraZones>({});
+  const [draftZoneName, setDraftZoneName] = useState('gate');
+  const [draftPoints, setDraftPoints] = useState<ZonePoint[]>([]);
+  const [zoneMessage, setZoneMessage] = useState('');
+  const [savingZones, setSavingZones] = useState(false);
+  const [frameSize, setFrameSize] = useState({ width: STREAM_WIDTH, height: STREAM_HEIGHT });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -196,7 +186,14 @@ function CameraStreamTile({
   const retryCountRef = useRef(0);
   const frameCounterRef = useRef({ count: 0, startedAt: 0 });
   const stats = { displayFps, state: liveState };
-  const fps = getCameraFps(camera, runtime, stats);
+  const displayRuntime = overlayRuntime || runtime;
+  const fps = getCameraFps(camera, displayRuntime, stats);
+  const overlayFrameSize = runtimeSourceSize(displayRuntime, frameSize);
+  const overlayZones = zoneEditorOpen ? zones : displayRuntime?.zones || {};
+
+  useEffect(() => {
+    setOverlayRuntime(runtime);
+  }, [runtime]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -215,6 +212,43 @@ function CameraStreamTile({
     onStats(cameraId, stats);
   }, [cameraId, displayFps, liveState, onStats]);
 
+  useEffect(() => {
+    if (camera?.is_active === false) return;
+    let cancelled = false;
+
+    async function loadOverlayMeta() {
+      try {
+        const nextRuntime = await getCameraMeta(token, cameraId);
+        if (!cancelled) setOverlayRuntime(nextRuntime);
+      } catch {
+        // Keep the last usable metadata so the raw stream continues rendering.
+      }
+    }
+
+    void loadOverlayMeta();
+    const timer = window.setInterval(loadOverlayMeta, OVERLAY_META_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [camera?.is_active, cameraId, token]);
+
+  useEffect(() => {
+    if (!canEditZones || !zoneEditorOpen) return;
+    let cancelled = false;
+    setZoneMessage('');
+    getCameraZones(token, cameraId)
+      .then((loadedZones) => {
+        if (!cancelled) setZones(loadedZones);
+      })
+      .catch((err) => {
+        if (!cancelled) setZoneMessage(err instanceof Error ? err.message : 'Không tải được ROI');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraId, canEditZones, token, zoneEditorOpen]);
+
   async function startStream() {
     stopStream(false);
     if (camera?.is_active === false) {
@@ -229,7 +263,7 @@ function CameraStreamTile({
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const response = await fetch(`${API_BASE}/cameras/${encodeURIComponent(cameraId)}/mjpeg`, {
+      const response = await fetch(`${API_BASE}/cameras/${encodeURIComponent(cameraId)}/raw.mjpeg`, {
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       });
@@ -288,8 +322,11 @@ function CameraStreamTile({
       if (!canvas) return;
       const context = canvas.getContext('2d');
       if (!context) return;
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        setFrameSize({ width: bitmap.width, height: bitmap.height });
+      }
       context.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
     } finally {
       bitmap.close();
@@ -303,22 +340,216 @@ function CameraStreamTile({
     }
   }
 
+  function addDraftPoint(event: MouseEvent<SVGSVGElement>) {
+    if (!zoneEditorOpen) return;
+    const svg = event.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const frameWidth = overlayFrameSize.width;
+    const frameHeight = overlayFrameSize.height;
+    const x = Math.round(((event.clientX - rect.left) / Math.max(rect.width, 1)) * frameWidth);
+    const y = Math.round(((event.clientY - rect.top) / Math.max(rect.height, 1)) * frameHeight);
+    setDraftPoints((current) => [...current, [clamp(x, 0, frameWidth), clamp(y, 0, frameHeight)]]);
+  }
+
+  async function saveDraftZone() {
+    const zoneName = draftZoneName.trim();
+    if (!zoneName) {
+      setZoneMessage('Tên ROI không được rỗng');
+      return;
+    }
+    if (draftPoints.length < 3) {
+      setZoneMessage('ROI cần tối thiểu 3 điểm');
+      return;
+    }
+    const nextZones = { ...zones, [zoneName]: draftPoints };
+    setSavingZones(true);
+    setZoneMessage('');
+    try {
+      const response = await updateCameraZones(token, cameraId, nextZones);
+      setZones(response.zones);
+      setDraftPoints([]);
+      setZoneMessage('Đã lưu ROI');
+    } catch (err) {
+      setZoneMessage(err instanceof Error ? err.message : 'Không lưu được ROI');
+    } finally {
+      setSavingZones(false);
+    }
+  }
+
+  async function deleteSelectedZone() {
+    const zoneName = draftZoneName.trim();
+    if (!zoneName || !zones[zoneName]) {
+      setZoneMessage('ROI chưa tồn tại');
+      return;
+    }
+    const nextZones = { ...zones };
+    delete nextZones[zoneName];
+    setSavingZones(true);
+    setZoneMessage('');
+    try {
+      const response = await updateCameraZones(token, cameraId, nextZones);
+      setZones(response.zones);
+      setDraftPoints([]);
+      setZoneMessage('Đã xóa ROI');
+    } catch (err) {
+      setZoneMessage(err instanceof Error ? err.message : 'Không xóa được ROI');
+    } finally {
+      setSavingZones(false);
+    }
+  }
+
   return (
     <article className="ops-camera-stream-card">
-      <header>
-        <strong>{camera?.name || runtime?.name || cameraId}</strong>
-        <span>RTSP {fps.rtsp} | Resize {fps.resize} | Model {fps.model}</span>
+      <header className="ops-camera-stream-header">
+        <div className="ops-camera-stream-heading">
+          <strong title={camera?.name || displayRuntime?.name || cameraId}>{camera?.name || displayRuntime?.name || cameraId}</strong>
+          <div className="ops-camera-stream-metrics" aria-label="Camera performance metrics">
+            <span className="ops-camera-stream-metric">RTSP {fps.rtsp}</span>
+            <span className="ops-camera-stream-metric">Resize {fps.resize}</span>
+            <span className="ops-camera-stream-metric">Model {fps.model}</span>
+          </div>
+        </div>
+        {canEditZones ? (
+          <button
+            type="button"
+            className={zoneEditorOpen ? 'ops-roi-toggle is-active' : 'ops-roi-toggle'}
+            onClick={() => {
+              setZoneEditorOpen((current) => !current);
+              setDraftPoints([]);
+              setZoneMessage('');
+            }}
+          >
+            ROI
+          </button>
+        ) : null}
       </header>
       <div className="ops-camera-media">
         <canvas ref={canvasRef} className="ops-camera-canvas" width={STREAM_WIDTH} height={STREAM_HEIGHT} />
-        <span className={`ops-camera-state state-${liveState}`}>{formatLiveState(liveState, runtime)}</span>
+        <StreamOverlay
+          runtime={displayRuntime}
+          zones={overlayZones}
+          draftPoints={draftPoints}
+          activeZoneName={draftZoneName}
+          frameSize={overlayFrameSize}
+          editable={canEditZones && zoneEditorOpen}
+          onAddPoint={addDraftPoint}
+        />
+        <span className={`ops-camera-state state-${liveState}`}>{formatLiveState(liveState, displayRuntime)}</span>
       </div>
+      {canEditZones && zoneEditorOpen ? (
+        <div className="ops-roi-toolbar">
+          <label>
+            ROI
+            <input value={draftZoneName} onChange={(event) => setDraftZoneName(event.target.value)} placeholder="gate" />
+          </label>
+          <button type="button" onClick={() => setDraftPoints((current) => current.slice(0, -1))} disabled={!draftPoints.length || savingZones}>
+            Undo
+          </button>
+          <button type="button" onClick={() => setDraftPoints([])} disabled={!draftPoints.length || savingZones}>
+            Clear
+          </button>
+          <button type="button" onClick={deleteSelectedZone} disabled={savingZones}>
+            Delete
+          </button>
+          <button type="button" className="is-primary" onClick={saveDraftZone} disabled={savingZones}>
+            Save
+          </button>
+          <span>{draftPoints.length} điểm</span>
+          {zoneMessage ? <em>{zoneMessage}</em> : null}
+        </div>
+      ) : null}
       <footer>
         <span>Nhận diện thời gian thực</span>
-        <strong>{detectionSummary(camera, runtime)}</strong>
+        <strong>{detectionSummary(camera, displayRuntime)}</strong>
       </footer>
+      <DetectionList runtime={displayRuntime} />
       {error ? <p className="ops-camera-error">{error}</p> : null}
     </article>
+  );
+}
+
+function StreamOverlay({
+  runtime,
+  zones,
+  draftPoints,
+  activeZoneName,
+  frameSize,
+  editable,
+  onAddPoint,
+}: {
+  runtime?: CameraRuntime;
+  zones: CameraZones;
+  draftPoints: ZonePoint[];
+  activeZoneName: string;
+  frameSize: { width: number; height: number };
+  editable: boolean;
+  onAddPoint: (event: MouseEvent<SVGSVGElement>) => void;
+}) {
+  const frameWidth = frameSize.width || STREAM_WIDTH;
+  const frameHeight = frameSize.height || STREAM_HEIGHT;
+  const tracks = normalizedRuntimeTracks(runtime).filter((track) => track.bbox.length === 4);
+  return (
+    <svg
+      className={editable ? 'ops-stream-overlay is-editing' : 'ops-stream-overlay'}
+      viewBox={`0 0 ${frameWidth} ${frameHeight}`}
+      preserveAspectRatio="none"
+      onClick={editable ? onAddPoint : undefined}
+      role="presentation"
+    >
+      {Object.entries(zones).map(([zoneName, points]) => (
+        <g key={zoneName} className={`ops-roi-zone ${zoneClass(zoneName)}`}>
+          <polygon points={pointsToSvg(points)} />
+          {points.map((point, index) => <circle key={`${zoneName}-${index}`} cx={point[0]} cy={point[1]} r="5" />)}
+          {points[0] ? <text x={points[0][0]} y={Math.max(18, points[0][1] - 10)}>{zoneName}</text> : null}
+        </g>
+      ))}
+      {tracks.map((track, index) => (
+        <TrackOverlay key={`${track.track_id ?? 'track'}-${index}`} track={track} />
+      ))}
+      {draftPoints.length ? (
+        <g className={`ops-roi-zone is-draft ${zoneClass(activeZoneName)}`}>
+          <polyline points={pointsToSvg(draftPoints)} />
+          {draftPoints.map((point, index) => <circle key={`draft-${index}`} cx={point[0]} cy={point[1]} r="7" />)}
+        </g>
+      ) : null}
+    </svg>
+  );
+}
+
+function TrackOverlay({ track }: { track: CameraRuntimeTrack }) {
+  const [x1, y1, x2, y2] = track.bbox;
+  const x = Math.min(x1, x2);
+  const y = Math.min(y1, y2);
+  const width = Math.max(1, Math.abs(x2 - x1));
+  const height = Math.max(1, Math.abs(y2 - y1));
+  const label = displayTrackLabel(track);
+  const score = typeof track.score === 'number' ? ` ${track.score.toFixed(2)}` : '';
+  return (
+    <g className={`ops-track-overlay ${detectionStatusClass(track.status)}`}>
+      <rect x={x} y={y} width={width} height={height} />
+      <text x={x} y={Math.max(18, y - 8)}>{label}{score}</text>
+    </g>
+  );
+}
+
+function DetectionList({ runtime }: { runtime?: CameraRuntime }) {
+  const tracks = knownRuntimeTracks(runtime);
+  if (!runtime?.is_realtime) {
+    return <p className="ops-detection-note">Chưa có meta realtime</p>;
+  }
+  if (!tracks.length) {
+    return <p className="ops-detection-note">Chưa có người quen</p>;
+  }
+  return (
+    <div className="ops-detection-list" aria-label="Realtime detections">
+      {tracks.map((track, index) => (
+        <span key={`${track.track_id ?? 'track'}-${index}`} className={`ops-detection-pill ${detectionStatusClass(track.status)}`}>
+          <strong>{displayTrackLabel(track)}</strong>
+          {track.score !== null && track.score !== undefined ? <small>{track.score.toFixed(3)}</small> : null}
+          {track.zone && track.zone !== 'none' ? <small>{track.zone}</small> : null}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -370,8 +601,8 @@ function findJpegMarker(buffer: Uint8Array, first: number, second: number) {
 
 function getCameraFps(camera?: Camera, runtime?: CameraRuntime, stats?: StreamStats) {
   const rtsp = positive(runtime?.camera_fps) || positive(camera?.camera_fps) || positive(stats?.displayFps);
-  const resize = positive(runtime?.read_fps) || positive(camera?.read_fps) || positive(stats?.displayFps);
-  const model = positive(runtime?.model_fps) || latencyToFps(runtime?.ai_latency_ms) || latencyToFps(camera?.ai_latency_ms) || positive(stats?.displayFps);
+  const resize = positive(runtime?.read_fps) || positive(camera?.read_fps) || positive(runtime?.stream_fps) || positive(stats?.displayFps);
+  const model = positive(runtime?.model_fps) || positive(runtime?.ai_update_fps);
   return {
     rtsp: formatFps(rtsp),
     resize: formatFps(resize),
@@ -383,24 +614,79 @@ function isCameraConnected(camera?: Camera, runtime?: CameraRuntime, stats?: Str
   return runtime?.is_realtime || stats?.state === 'running' || camera?.worker_status === 'running' || Number(camera?.read_fps || 0) > 0;
 }
 
-function isPipelineRunning(camera?: Camera, runtime?: CameraRuntime, stats?: StreamStats) {
-  return isCameraConnected(camera, runtime, stats) && (positive(runtime?.model_fps) > 0 || positive(camera?.ai_latency_ms) > 0 || positive(stats?.displayFps) > 0);
-}
-
 function detectionSummary(camera?: Camera, runtime?: CameraRuntime) {
   if (camera?.last_error || runtime?.last_error) return 'Cần kiểm tra';
-  if (runtime?.tracks_count) return `${runtime.tracks_count} nhận diện`;
+  const tracks = knownRuntimeTracks(runtime);
+  if (tracks.length) return `${tracks.length} người quen`;
   return runtime?.is_realtime ? 'Chưa có nhận diện' : 'Chưa có meta realtime';
+}
+
+function knownRuntimeTracks(runtime?: CameraRuntime): CameraRuntimeTrack[] {
+  return normalizedRuntimeTracks(runtime).filter((track) => track.status === 'known' && track.label.trim() && track.label !== 'Known');
+}
+
+function normalizedRuntimeTracks(runtime?: CameraRuntime): CameraRuntimeTrack[] {
+  return (runtime?.tracks || []).map((track) => {
+    const status = normalizeTrackStatus(track.status);
+    return {
+      ...track,
+      status,
+      label: normalizeTrackLabel(status, track.label),
+      score: typeof track.score === 'number' && Number.isFinite(track.score) ? track.score : null,
+    };
+  });
+}
+
+function normalizeTrackStatus(status?: string | null) {
+  const normalized = String(status || '').toLowerCase();
+  return ['known', 'unknown', 'unverified'].includes(normalized) ? normalized : 'unverified';
+}
+
+function normalizeTrackLabel(status: string, label?: string | null) {
+  const trimmed = String(label || '').trim();
+  if (status === 'known') return trimmed || 'Known';
+  if (status === 'unknown') return 'Unknown';
+  return 'Unverified';
+}
+
+function displayTrackLabel(track: CameraRuntimeTrack) {
+  return normalizeTrackLabel(normalizeTrackStatus(track.status), track.label);
+}
+
+function detectionStatusClass(status?: string | null) {
+  const normalized = normalizeTrackStatus(status);
+  if (normalized === 'unknown') return 'is-unknown';
+  if (normalized === 'unverified') return 'is-unverified';
+  return 'is-known';
+}
+
+function pointsToSvg(points: ZonePoint[]) {
+  return points.map((point) => `${point[0]},${point[1]}`).join(' ');
+}
+
+function zoneClass(zoneName: string) {
+  const normalized = zoneName.trim().toLowerCase();
+  if (normalized.includes('restricted')) return 'is-restricted';
+  if (normalized.includes('gate')) return 'is-gate';
+  return 'is-custom';
+}
+
+function runtimeSourceSize(runtime: CameraRuntime | undefined, fallback: { width: number; height: number }) {
+  const width = positive(runtime?.source_width);
+  const height = positive(runtime?.source_height);
+  return {
+    width: width || fallback.width || STREAM_WIDTH,
+    height: height || fallback.height || STREAM_HEIGHT,
+  };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function positive(value?: number | null) {
   const number = Number(value || 0);
   return Number.isFinite(number) && number > 0 ? number : 0;
-}
-
-function latencyToFps(value?: number | null) {
-  const latency = positive(value);
-  return latency ? 1000 / Math.max(latency, 1) : 0;
 }
 
 function formatFps(value?: number | null) {

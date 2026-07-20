@@ -9,8 +9,8 @@ module.exports = (phase) => {
     ...(distDir ? { distDir } : {}),
     ...(isDev ? {} : { output: 'standalone' }),
     allowedDevOrigins: [
-      '192.168.2.17',
-      'http://192.168.2.17:3000',
+      '192.168.2.182',
+      'http://192.168.2.182:3000',
     ],
     async rewrites() {
       const backendOrigin = process.env.BACKEND_ORIGIN || `http://127.0.0.1:${process.env.BACKEND_PORT || '8000'}`;

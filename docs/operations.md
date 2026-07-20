@@ -92,6 +92,8 @@ camera:{camera_id}:latest_annotated_jpeg
 camera:{camera_id}:latest_meta
 ```
 
+LiveMonitor production đọc raw stream từ `/cameras/{camera_id}/raw.mjpeg` và tự vẽ bbox/label/ROI bằng metadata. Dashboard dùng `/cameras/runtime` cho summary và `/cameras/{camera_id}/meta` để mỗi camera stream poll overlay nhanh hơn. Endpoint `/cameras/{camera_id}/mjpeg` được giữ cho debug annotated stream; thêm `?overlay=0` để endpoint này trả raw stream.
+
 Nếu Dashboard hiện `Waiting for camera worker frame`, kiểm tra theo thứ tự:
 
 1. Camera active trong DB.
@@ -116,6 +118,77 @@ Nếu camera vẫn lỗi sau reload:
 - `timed out`: RTSP không phản hồi hoặc camera bận.
 - `WinError 10054`: remote host/camera đóng connection.
 - `inactive + error`: camera đang active trong DB nhưng worker không mở được stream.
+
+## LiveMonitor ROI/Zone
+
+ROI/Zone dùng để đánh dấu vùng như `gate` hoặc `restricted_area` trên camera realtime. Dữ liệu được lưu trong `camera_sources.config.zones` theo pixel frame gốc:
+
+```json
+{
+  "gate": [[100, 100], [500, 100], [500, 400]],
+  "restricted_area": [[600, 120], [900, 120], [900, 500]]
+}
+```
+
+Quyền chỉnh sửa:
+
+- Chỉ `admin_super` thấy nút `ROI` trên LiveMonitor.
+- User role thấp chỉ xem ROI do frontend overlay vẽ trên live stream.
+
+Cách vẽ trên Dashboard:
+
+1. Đăng nhập `admin_super`.
+2. Vào Dashboard, chọn chế độ `Stream + Detect`.
+3. Bấm `ROI` trên card camera.
+4. Nhập tên zone, ví dụ `gate` hoặc `restricted_area`.
+5. Click tối thiểu 3 điểm lên stream.
+6. Bấm `Save`.
+
+Worker tự reload zones từ DB theo `CAMERA_ZONE_RELOAD_INTERVAL_SECONDS`, mặc định 5 giây. Nếu ROI chưa hiện đúng trên overlay hoặc track chưa đổi zone, đợi vài giây rồi kiểm tra worker log và `/cameras/runtime`.
+
+LiveMonitor production không phụ thuộc worker vẽ bbox sẵn. Bbox, label, score và ROI được vẽ bằng frontend overlay từ metadata. Nếu muốn xem frame debug đã vẽ sẵn từ worker, bật `debug_annotated_stream=true` trong camera config hoặc `DEBUG_ANNOTATED_STREAM=true`, rồi dùng endpoint `/cameras/{camera_id}/mjpeg`.
+
+Kiểm tra nhanh contract ROI:
+
+```bash
+/home/ntcai/venv/bin/python scripts/dev/validate_live_monitor_roi_smoke.py
+```
+
+Khi backend đang mở ở `localhost:8000`, smoke check cũng tự probe `/cameras/runtime` và `/cameras/{camera_id}/raw.mjpeg`. Có thể chạy riêng runtime probe:
+
+```bash
+/home/ntcai/venv/bin/python scripts/dev/validate_live_monitor_frontend_overlay_runtime.py
+```
+
+Smoke check cũng chạy guard chống vẽ trùng overlay:
+
+```bash
+/home/ntcai/venv/bin/python scripts/dev/validate_live_monitor_no_double_overlay.py
+```
+
+Khi Redis/worker đang chạy, có thể kiểm tra trực tiếp payload raw frame + metadata:
+
+```bash
+/home/ntcai/venv/bin/python scripts/dev/validate_redis_overlay_payload.py
+```
+
+Endpoint liên quan:
+
+```text
+GET   /cameras/{camera_id}/zones
+PATCH /cameras/{camera_id}/zones
+GET   /cameras/{camera_id}/meta
+GET   /cameras/{camera_id}/raw.mjpeg
+GET   /cameras/{camera_id}/mjpeg
+GET   /cameras/{camera_id}/mjpeg?overlay=0
+```
+
+Lỗi thường gặp:
+
+- `ROI cần tối thiểu 3 điểm`: polygon chưa đủ điểm.
+- `Zone name must not be empty`: tên zone rỗng.
+- ROI lưu xong chưa thấy trên stream: worker chưa reload zone, `/cameras/runtime` chưa có zones mới, hoặc frontend chưa nhận poll mới.
+- Rule không báo đúng vùng: kiểm tra tên zone có khớp `GATE_ZONES` hoặc `RESTRICTED_ZONES`.
 
 ## Users Và RBAC
 

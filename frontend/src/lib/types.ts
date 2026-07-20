@@ -21,6 +21,7 @@ export type SystemAnalytics = {
     ram_percent: number;
     disk_percent: number;
     linux_metrics_enabled: boolean;
+    source?: 'prometheus' | 'native' | 'none' | string;
   };
   throughput: {
     backend_rps: number;
@@ -91,13 +92,36 @@ export type CameraRuntime = {
   camera_fps: number;
   ai_latency_ms: number;
   model_fps: number;
+  ai_update_fps?: number;
+  stream_fps?: number;
+  model_latency_fps?: number;
   frame_id?: number | null;
+  source_width?: number | null;
+  source_height?: number | null;
   tracks_count: number;
+  tracks?: CameraRuntimeTrack[];
+  zones?: CameraZones;
   meta_age_seconds?: number | null;
   updated_at?: string | null;
   is_realtime: boolean;
   last_error?: string | null;
 };
+
+export type CameraRuntimeTrack = {
+  track_id: number | string | null;
+  label: string;
+  status: 'known' | 'unknown' | 'unverified' | string;
+  identity_status?: 'tracking' | 'known' | 'unknown' | 'unverified' | string;
+  score: number | null;
+  bbox: number[];
+  zone: string;
+  unknown_alert_sent?: boolean;
+  unknown_alert_event_id?: string | null;
+};
+
+export type ZonePoint = [number, number];
+
+export type CameraZones = Record<string, ZonePoint[]>;
 
 export type Rule = {
   rule_code: string;
@@ -148,6 +172,7 @@ export type UserAccount = CurrentUser & {
 };
 
 export type UserLoginEvent = {
+  id: number;
   action: string;
   success: boolean;
   ip_address: string | null;

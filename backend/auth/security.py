@@ -11,10 +11,8 @@ from backend.database.postgres import fetch_one
 security = HTTPBearer()
 
 ROLE_NAMES = {
-    0: "viewer",
-    1: "operator",
-    5: "admin",
-    9: "admin_super",
+    5: "sub_admin",
+    9: "admin",
 }
 
 ALL_PERMISSIONS = {
@@ -39,19 +37,6 @@ ALL_PERMISSIONS = {
 }
 
 ROLE_PERMISSIONS = {
-    0: {
-        "alerts:read",
-        "cameras:read",
-        "rules:read",
-        "employees:read",
-    },
-    1: {
-        "alerts:read",
-        "alerts:update",
-        "cameras:read",
-        "rules:read",
-        "employees:read",
-    },
     5: {
         "alerts:read",
         "alerts:update",

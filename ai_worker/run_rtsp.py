@@ -12,7 +12,7 @@ sys.path.insert(0, str(SYSTEM_DIR))
 from alert_manager import AlertManager
 from camera_reader import CameraFrameReader
 from face_pipeline import FaceRecognitionPipeline
-from tracker import CentroidTracker
+from tracker_factory import create_tracker
 from unknown_event_detector import UnknownEventDetector
 from visualization import draw_tracks
 from zone_manager import ZoneManager
@@ -52,7 +52,7 @@ def main() -> None:
     reader.start()
 
     pipeline = FaceRecognitionPipeline()
-    tracker = CentroidTracker()
+    tracker = create_tracker()
     zone_manager = ZoneManager()
     unknown_detector = UnknownEventDetector()
     alert_manager = AlertManager()
@@ -78,9 +78,16 @@ def main() -> None:
                 tracker.update(results)
                 for track in list(tracker.tracks.values()):
                     track.zone = zone_manager.get_zone(args.camera_id, track.bbox)
+                    pending_resolution = track.consume_pending_unknown_resolution()
+                    if pending_resolution is not None:
+                        event_id, label, score = pending_resolution
+                        if not alert_manager.resolve_unknown_as_known(event_id, label, score):
+                            track.restore_pending_unknown_resolution(event_id, label, score)
                     warning = unknown_detector.update_track(track, args.camera_id)
                     if warning:
                         event = alert_manager.save_unknown_warning(frame, warning, args.camera_id)
+                        unknown_detector.remember_unknown_warning(args.camera_id, warning, event["event_id"])
+                        track.mark_unknown_alert_sent(event["event_id"])
                         last_warning_text = f"WARNING {event['warning_level']}: {event['warning_type']} track={event['track_id']}"
                         print(last_warning_text, event["event_id"])
                 last_ai_time = now

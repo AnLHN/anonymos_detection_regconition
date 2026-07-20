@@ -1,4 +1,12 @@
-from config import FACE_THRESHOLD, MIN_DETECTION_SCORE, MIN_FACE_HEIGHT, MIN_FACE_WIDTH
+from config import (
+    FACE_THRESHOLD,
+    RECOGNITION_DETECTION_SCORE,
+    RECOGNITION_MIN_FACE_HEIGHT,
+    RECOGNITION_MIN_FACE_WIDTH,
+    TRACK_DETECTION_SCORE,
+    TRACK_MIN_FACE_HEIGHT,
+    TRACK_MIN_FACE_WIDTH,
+)
 from data_contract import RecognitionResult, SearchCandidate
 from insightface_recognizer import FaceEmbedding
 
@@ -45,12 +53,27 @@ def decide_recognition(
     )
 
 
-def is_good_quality_face(face: FaceEmbedding) -> bool:
+def is_trackable_face(face: FaceEmbedding) -> bool:
     x1, y1, x2, y2 = face.bbox
     width = x2 - x1
     height = y2 - y1
     return (
-        face.det_score >= MIN_DETECTION_SCORE
-        and width >= MIN_FACE_WIDTH
-        and height >= MIN_FACE_HEIGHT
+        face.det_score >= TRACK_DETECTION_SCORE
+        and width >= TRACK_MIN_FACE_WIDTH
+        and height >= TRACK_MIN_FACE_HEIGHT
     )
+
+
+def is_recognition_quality_face(face: FaceEmbedding) -> bool:
+    x1, y1, x2, y2 = face.bbox
+    width = x2 - x1
+    height = y2 - y1
+    return (
+        face.det_score >= RECOGNITION_DETECTION_SCORE
+        and width >= RECOGNITION_MIN_FACE_WIDTH
+        and height >= RECOGNITION_MIN_FACE_HEIGHT
+    )
+
+
+def is_good_quality_face(face: FaceEmbedding) -> bool:
+    return is_recognition_quality_face(face)

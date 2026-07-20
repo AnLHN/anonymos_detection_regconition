@@ -1,9 +1,10 @@
+import 'react-datepicker/dist/react-datepicker.css';
 import './globals.css';
 import AdminShell from '@/components/AdminShell';
 
 export const metadata = {
-  title: 'NTC Anonymous Detection & Recognition',
-  description: 'NTC admin dashboard for anonymous detection and recognition',
+  title: 'NTC Stranger Detect',
+  description: 'NTC admin dashboard for stranger detection',
   icons: {
     icon: '/ntc-logo.png',
     shortcut: '/ntc-logo.png',

@@ -5,13 +5,13 @@ from typing import Any
 
 import cv2
 import redis
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from backend.auth.security import get_current_user, require_permission
-from backend.cameras.annotated_stream import annotated_mjpeg_frames, ensure_camera_worker, stop_camera_worker
+from backend.auth.security import get_current_user, require_admin_super, require_permission
+from backend.cameras.annotated_stream import annotated_mjpeg_frames, ensure_camera_worker, raw_mjpeg_frames, stop_camera_worker
 from backend.config import MEDIAMTX_PUBLIC_WEBRTC_BASE_URL, REDIS_URL
 from backend.database.postgres import execute, fetch_all, fetch_one
 
@@ -30,7 +30,7 @@ class CameraCreate(BaseModel):
     source_url: str
     location: str = ""
     is_active: bool = True
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CameraUpdate(BaseModel):
@@ -40,6 +40,10 @@ class CameraUpdate(BaseModel):
     location: str | None = None
     is_active: bool | None = None
     config: dict[str, Any] | None = None
+
+
+class CameraZonesUpdate(BaseModel):
+    zones: dict[str, list[list[int | float]]] = Field(default_factory=dict)
 
 
 def validate_rtsp_source(source_type: str | None, source_url: str | None) -> None:
@@ -144,10 +148,161 @@ def as_float(value: Any) -> float:
         return 0.0
 
 
+def as_int(value: Any) -> int | None:
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
 def latency_to_fps(ai_latency_ms: float) -> float:
     if ai_latency_ms <= 0:
         return 0.0
     return 1000.0 / max(ai_latency_ms, 1.0)
+
+
+def normalize_track_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in {"known", "unknown", "unverified"}:
+        return status
+    return "unverified"
+
+
+def normalize_track_label(status: str, value: Any) -> str:
+    label = str(value or "").strip()
+    if status == "known":
+        return label or "Known"
+    if status == "unknown":
+        return "Unknown"
+    return "Unverified"
+
+
+def normalize_track_bbox(value: Any) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
+        return []
+    bbox: list[int] = []
+    for item in value:
+        try:
+            bbox.append(int(float(item)))
+        except (TypeError, ValueError):
+            return []
+    return bbox
+
+
+def normalize_runtime_tracks(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    tracks: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        status = normalize_track_status(item.get("status"))
+        score = item.get("score")
+        try:
+            normalized_score = float(score) if score is not None else None
+        except (TypeError, ValueError):
+            normalized_score = None
+        tracks.append(
+            {
+                "track_id": item.get("track_id"),
+                "label": normalize_track_label(status, item.get("label")),
+                "status": status,
+                "identity_status": normalize_track_status(item.get("identity_status")),
+                "score": normalized_score,
+                "bbox": normalize_track_bbox(item.get("bbox")),
+                "zone": str(item.get("zone") or "none"),
+                "unknown_alert_sent": bool(item.get("unknown_alert_sent")),
+                "unknown_alert_event_id": str(item.get("unknown_alert_event_id")) if item.get("unknown_alert_event_id") else None,
+            }
+        )
+    return tracks
+
+
+def normalize_zone_name(value: Any) -> str:
+    name = str(value or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Zone name must not be empty")
+    return name
+
+
+def normalize_zone_point(value: Any, zone_name: str) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise HTTPException(status_code=400, detail=f"Zone {zone_name} point must be [x, y]")
+    try:
+        return [int(round(float(value[0]))), int(round(float(value[1])))]
+    except (TypeError, ValueError) as error:
+        raise HTTPException(status_code=400, detail=f"Zone {zone_name} point coordinates must be numbers") from error
+
+
+def camera_scoped_zone_value(value: Any, camera_id: str | None = None) -> Any:
+    if not camera_id or not isinstance(value, dict):
+        return value
+    scoped = value.get(camera_id)
+    if isinstance(scoped, dict):
+        return scoped
+    return value
+
+
+def normalize_camera_zones(value: Any, camera_id: str | None = None) -> dict[str, list[list[int]]]:
+    value = camera_scoped_zone_value(value, camera_id)
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="Zones must be an object")
+    zones: dict[str, list[list[int]]] = {}
+    for raw_name, raw_polygon in value.items():
+        zone_name = normalize_zone_name(raw_name)
+        if isinstance(raw_polygon, dict):
+            continue
+        if not isinstance(raw_polygon, list):
+            raise HTTPException(status_code=400, detail=f"Zone {zone_name} polygon must be a list")
+        polygon = [normalize_zone_point(point, zone_name) for point in raw_polygon]
+        if len(polygon) < 3:
+            raise HTTPException(status_code=400, detail=f"Zone {zone_name} polygon must have at least 3 points")
+        zones[zone_name] = polygon
+    return zones
+
+
+def camera_runtime_payload(camera: dict[str, Any], meta: dict[str, Any] | None, now: datetime) -> dict[str, Any]:
+    created_at = parse_datetime(meta.get("created_at")) if meta else None
+    age_seconds = (now - created_at).total_seconds() if created_at else None
+    read_fps = as_float(meta.get("read_fps") if meta else camera.get("read_fps"))
+    camera_fps = as_float(meta.get("camera_fps") if meta else camera.get("camera_fps"))
+    ai_latency_ms = as_float(meta.get("ai_latency_ms") if meta else camera.get("ai_latency_ms"))
+    config = camera.get("config") or {}
+    ai_interval = as_float(meta.get("ai_interval") if meta else config.get("ai_interval"))
+    ai_update_fps = as_float(meta.get("ai_update_fps") if meta else 0)
+    model_latency_fps = as_float(meta.get("model_latency_fps") if meta else latency_to_fps(ai_latency_ms))
+    stream_fps = as_float(meta.get("stream_publish_fps") if meta else config.get("stream_publish_fps"))
+    tracks = normalize_runtime_tracks(meta.get("tracks") if meta else None)
+    zones = normalize_camera_zones(
+        meta.get("zones") if meta and isinstance(meta.get("zones"), dict) else config.get("zones") or {},
+        camera["camera_id"],
+    )
+    return {
+        "camera_id": camera["camera_id"],
+        "name": camera.get("name"),
+        "location": camera.get("location"),
+        "worker_status": camera.get("worker_status"),
+        "read_fps": read_fps,
+        "camera_fps": camera_fps,
+        "ai_latency_ms": ai_latency_ms,
+        "model_fps": ai_update_fps,
+        "ai_update_fps": ai_update_fps,
+        "stream_fps": stream_fps,
+        "model_latency_fps": model_latency_fps,
+        "frame_id": meta.get("frame_id") if meta else None,
+        "source_width": as_int(meta.get("source_width") if meta else None),
+        "source_height": as_int(meta.get("source_height") if meta else None),
+        "tracks_count": len(tracks),
+        "tracks": tracks,
+        "zones": zones,
+        "meta_age_seconds": age_seconds,
+        "updated_at": meta.get("created_at") if meta else iso_datetime(camera.get("last_seen_at")),
+        "is_realtime": age_seconds is not None and age_seconds <= 3,
+        "last_error": camera.get("last_error"),
+    }
 
 
 @router.get("")
@@ -164,6 +319,8 @@ def list_cameras(_current_user=Depends(require_camera_read)) -> list[dict]:
         ORDER BY c.camera_id
         """
     )
+    for camera in cameras:
+        camera["config"] = normalize_camera_config(camera.get("config") or {}, camera["camera_id"])
     prewarm_always_on_cameras(cameras)
     return cameras
 
@@ -171,7 +328,7 @@ def list_cameras(_current_user=Depends(require_camera_read)) -> list[dict]:
 @router.post("")
 def create_camera(payload: CameraCreate, _current_user=Depends(require_camera_create)) -> dict[str, str]:
     validate_rtsp_source(payload.source_type, payload.source_url)
-    config = normalize_camera_config(payload.config)
+    config = normalize_camera_config(payload.config, payload.camera_id)
     execute(
         """
         INSERT INTO camera_sources (camera_id, name, source_type, source_url, location, is_active, config)
@@ -203,7 +360,7 @@ def create_camera(payload: CameraCreate, _current_user=Depends(require_camera_cr
 def list_camera_runtime(_current_user=Depends(require_camera_read)) -> list[dict[str, Any]]:
     cameras = fetch_all(
         """
-        SELECT c.camera_id, c.name, c.location,
+        SELECT c.camera_id, c.name, c.location, c.config,
                s.status AS worker_status, s.read_fps, s.camera_fps, s.ai_latency_ms,
                s.last_error, s.last_seen_at
         FROM camera_sources c
@@ -217,31 +374,73 @@ def list_camera_runtime(_current_user=Depends(require_camera_read)) -> list[dict
     rows: list[dict[str, Any]] = []
     for camera in cameras:
         meta = read_latest_meta(client, camera["camera_id"])
-        created_at = parse_datetime(meta.get("created_at")) if meta else None
-        age_seconds = (now - created_at).total_seconds() if created_at else None
-        read_fps = as_float(meta.get("read_fps") if meta else camera.get("read_fps"))
-        camera_fps = as_float(meta.get("camera_fps") if meta else camera.get("camera_fps"))
-        ai_latency_ms = as_float(meta.get("ai_latency_ms") if meta else camera.get("ai_latency_ms"))
-        tracks = meta.get("tracks") if meta and isinstance(meta.get("tracks"), list) else []
-        rows.append(
-            {
-                "camera_id": camera["camera_id"],
-                "name": camera.get("name"),
-                "location": camera.get("location"),
-                "worker_status": camera.get("worker_status"),
-                "read_fps": read_fps,
-                "camera_fps": camera_fps,
-                "ai_latency_ms": ai_latency_ms,
-                "model_fps": latency_to_fps(ai_latency_ms),
-                "frame_id": meta.get("frame_id") if meta else None,
-                "tracks_count": len(tracks),
-                "meta_age_seconds": age_seconds,
-                "updated_at": meta.get("created_at") if meta else iso_datetime(camera.get("last_seen_at")),
-                "is_realtime": age_seconds is not None and age_seconds <= 3,
-                "last_error": camera.get("last_error"),
-            }
-        )
+        rows.append(camera_runtime_payload(camera, meta, now))
     return rows
+
+
+@router.get("/{camera_id}/meta")
+def get_camera_runtime_meta(camera_id: str, _current_user=Depends(require_camera_read)) -> dict[str, Any]:
+    camera = fetch_one(
+        """
+        SELECT c.camera_id, c.name, c.location, c.config,
+               s.status AS worker_status, s.read_fps, s.camera_fps, s.ai_latency_ms,
+               s.last_error, s.last_seen_at
+        FROM camera_sources c
+        LEFT JOIN camera_worker_status s ON s.camera_id = c.camera_id
+        WHERE c.camera_id = %s
+          AND c.source_type = 'rtsp'
+          AND c.is_active = true
+        """,
+        (camera_id,),
+    )
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    meta = read_latest_meta(runtime_redis_client(), camera_id)
+    return camera_runtime_payload(camera, meta, datetime.now(timezone.utc))
+
+
+@router.get("/{camera_id}/zones")
+def get_camera_zones(camera_id: str, _current_user=Depends(require_camera_read)) -> dict[str, list[list[int]]]:
+    camera = fetch_one(
+        """
+        SELECT camera_id, config
+        FROM camera_sources
+        WHERE camera_id = %s
+        """,
+        (camera_id,),
+    )
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    config = camera.get("config") or {}
+    return normalize_camera_zones(config.get("zones") or {}, camera_id)
+
+
+@router.patch("/{camera_id}/zones")
+def update_camera_zones(camera_id: str, payload: CameraZonesUpdate, _current_user=Depends(require_admin_super)) -> dict[str, Any]:
+    camera = fetch_one(
+        """
+        SELECT camera_id, source_url, source_type, is_active, config
+        FROM camera_sources
+        WHERE camera_id = %s
+        """,
+        (camera_id,),
+    )
+    if not camera:
+        raise HTTPException(status_code=404, detail="Camera not found")
+
+    zones = normalize_camera_zones(payload.zones)
+    config = normalize_camera_config(camera.get("config") or {}, camera_id)
+    config["zones"] = zones
+    execute(
+        """
+        UPDATE camera_sources
+        SET config = %s, updated_at = now()
+        WHERE camera_id = %s
+        """,
+        (Jsonb(config), camera_id),
+    )
+    apply_camera_worker_state(camera["camera_id"], camera["source_url"], camera["source_type"], camera["is_active"], config)
+    return {"camera_id": camera_id, "zones": zones}
 
 
 @router.get("/{camera_id}/live")
@@ -272,7 +471,39 @@ def get_camera_live(camera_id: str, _current_user=Depends(require_camera_read)) 
 
 
 @router.get("/{camera_id}/mjpeg")
-def stream_camera_mjpeg(camera_id: str, _current_user=Depends(require_camera_read)) -> StreamingResponse:
+def stream_camera_mjpeg(
+    camera_id: str,
+    overlay: bool = Query(True, description="Return annotated debug stream when true, raw production stream when false"),
+    _current_user=Depends(require_camera_read),
+) -> StreamingResponse:
+    camera = validate_stream_camera(camera_id)
+    frame_iter = annotated_mjpeg_frames if overlay else raw_mjpeg_frames
+    return StreamingResponse(
+        frame_iter(camera["camera_id"], camera["source_url"], camera.get("config") or {}),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/{camera_id}/raw.mjpeg")
+def stream_camera_raw_mjpeg(camera_id: str, _current_user=Depends(require_camera_read)) -> StreamingResponse:
+    camera = validate_stream_camera(camera_id)
+    return StreamingResponse(
+        raw_mjpeg_frames(camera["camera_id"], camera["source_url"], camera.get("config") or {}),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def validate_stream_camera(camera_id: str) -> dict[str, Any]:
     camera = fetch_one(
         """
         SELECT camera_id, source_url, source_type, is_active, config
@@ -290,16 +521,8 @@ def stream_camera_mjpeg(camera_id: str, _current_user=Depends(require_camera_rea
     if not camera["source_url"]:
         raise HTTPException(status_code=400, detail="Camera source is empty")
     validate_rtsp_source(camera["source_type"], camera["source_url"])
-
-    return StreamingResponse(
-        annotated_mjpeg_frames(camera["camera_id"], camera["source_url"], camera.get("config") or {}),
-        media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    camera["config"] = normalize_camera_config(camera.get("config") or {}, camera["camera_id"])
+    return camera
 
 
 @router.patch("/{camera_id}")
@@ -312,7 +535,7 @@ def update_camera(camera_id: str, payload: CameraUpdate, _current_user=Depends(r
         if value is not None:
             fields.append(f"{field_name} = %s")
             params.append(value)
-    normalized_config = normalize_camera_config(payload.config) if payload.config is not None else None
+    normalized_config = normalize_camera_config(payload.config, camera_id) if payload.config is not None else None
     if normalized_config is not None:
         fields.append("config = %s")
         params.append(Jsonb(normalized_config))
@@ -360,19 +583,20 @@ def reload_camera(camera_id: str, _current_user=Depends(require_camera_update)) 
     if not camera["is_active"]:
         raise HTTPException(status_code=400, detail="Camera is inactive")
     validate_rtsp_source(camera["source_type"], camera["source_url"])
-    config = normalize_camera_config(camera.get("config") or {})
+    config = normalize_camera_config(camera.get("config") or {}, camera["camera_id"])
     probe_ok, camera_fps, probe_error = probe_rtsp_source(camera["source_url"])
     if not probe_ok:
         write_camera_worker_status(camera["camera_id"], "error", camera_fps, probe_error)
         raise HTTPException(status_code=502, detail=probe_error or "Camera probe failed")
     write_camera_worker_status(camera["camera_id"], "standby", camera_fps, None)
-    if config.get("always_on"):
-        ensure_camera_worker(camera["camera_id"], camera["source_url"], config)
+    ensure_camera_worker(camera["camera_id"], camera["source_url"], config, restart=True)
     return {"status": "ok", "camera_fps": camera_fps, "cooldown_seconds": CAMERA_RELOAD_LOCK_SECONDS}
 
 
-def normalize_camera_config(config: dict[str, Any] | None) -> dict[str, Any]:
+def normalize_camera_config(config: dict[str, Any] | None, camera_id: str | None = None) -> dict[str, Any]:
     normalized = dict(config or {})
+    if "zones" in normalized:
+        normalized["zones"] = normalize_camera_zones(normalized.get("zones"), camera_id)
     if normalized.get("always_on"):
         normalized.setdefault("mjpeg_idle_timeout", 0)
     return normalized
@@ -380,16 +604,16 @@ def normalize_camera_config(config: dict[str, Any] | None) -> dict[str, Any]:
 
 def prewarm_always_on_cameras(cameras: list[dict]) -> None:
     for camera in cameras:
-        config = normalize_camera_config(camera.get("config") or {})
+        config = normalize_camera_config(camera.get("config") or {}, camera["camera_id"])
         if camera["source_type"] == "rtsp" and camera["is_active"] and config.get("always_on"):
             ensure_camera_worker(camera["camera_id"], camera["source_url"], config)
 
 
 def apply_camera_worker_state(camera_id: str, source_url: str, source_type: str, is_active: bool, config: dict[str, Any]) -> None:
-    normalized = normalize_camera_config(config)
-    if source_type == "rtsp" and is_active and normalized.get("always_on"):
+    normalized = normalize_camera_config(config, camera_id)
+    if source_type == "rtsp" and is_active:
         write_camera_worker_status(camera_id, "standby", 0.0, None)
-        ensure_camera_worker(camera_id, source_url, normalized)
+        ensure_camera_worker(camera_id, source_url, normalized, restart=True)
         return
     if not is_active:
         stop_camera_worker(camera_id)

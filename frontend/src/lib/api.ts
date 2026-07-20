@@ -1,6 +1,6 @@
 import { clearToken } from './auth';
 import { API_BASE } from './config';
-import type { Alert, Camera, CameraPayload, CameraRuntime, CurrentUser, Employee, EmployeeEnrollPayload, Health, Rule, SystemAnalytics, UserAccount, UserLoginEvent } from './types';
+import type { Alert, Camera, CameraPayload, CameraRuntime, CameraZones, CurrentUser, Employee, EmployeeEnrollPayload, Health, Rule, SystemAnalytics, UserAccount, UserLoginEvent } from './types';
 
 const REQUEST_TIMEOUT_MS = 10000;
 
@@ -19,6 +19,28 @@ export type AlertFilters = {
 };
 
 export class AuthExpiredError extends Error {}
+
+export class ApiError extends Error {
+  status: number;
+  detail?: string;
+
+  constructor(status: number, path: string, detail?: string) {
+    super(detail || `API lỗi: ${path}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function responseDetail(response: Response): Promise<string | undefined> {
+  try {
+    const data = await response.json();
+    if (typeof data?.detail === 'string') return data.detail;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 
 async function request<T>(path: string, token?: string | null, options: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
@@ -41,11 +63,12 @@ async function request<T>(path: string, token?: string | null, options: RequestI
   } finally {
     window.clearTimeout(timeout);
   }
-  if (response.status === 401 || response.status === 403) {
+  if ((response.status === 401 || response.status === 403) && token) {
     clearToken();
-    throw new AuthExpiredError('Phiên đăng nhập hết hạn');
+    const detail = await responseDetail(response);
+    throw new AuthExpiredError(detail || 'Phiên đăng nhập hết hạn');
   }
-  if (!response.ok) throw new Error(`API lỗi: ${path}`);
+  if (!response.ok) throw new ApiError(response.status, path, await responseDetail(response));
   return response.json();
 }
 
@@ -151,6 +174,22 @@ export function getCameraRuntime(token: string) {
   return request<CameraRuntime[]>('/cameras/runtime', token);
 }
 
+export function getCameraMeta(token: string, cameraId: string) {
+  return request<CameraRuntime>(`/cameras/${encodeURIComponent(cameraId)}/meta`, token);
+}
+
+export function getCameraZones(token: string, cameraId: string) {
+  return request<CameraZones>(`/cameras/${encodeURIComponent(cameraId)}/zones`, token);
+}
+
+export function updateCameraZones(token: string, cameraId: string, zones: CameraZones) {
+  return request<{ camera_id: string; zones: CameraZones }>(`/cameras/${encodeURIComponent(cameraId)}/zones`, token, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ zones }),
+  });
+}
+
 
 export function saveCamera(token: string, payload: CameraPayload) {
   return request<{ status: string }>('/cameras', token, {
@@ -218,6 +257,14 @@ export function getUsers(token: string) {
 
 export function getUserLoginHistory(token: string, username: string) {
   return request<UserLoginEvent[]>(`/users/${encodeURIComponent(username)}/login-history`, token);
+}
+
+export function clearUserLoginHistory(token: string, username: string) {
+  return request<{ status: string; deleted: number }>(`/users/${encodeURIComponent(username)}/login-history`, token, { method: 'DELETE' });
+}
+
+export function deleteUserLoginHistoryEvent(token: string, username: string, eventId: number) {
+  return request<{ status: string; deleted: number }>(`/users/${encodeURIComponent(username)}/login-history/${encodeURIComponent(eventId)}`, token, { method: 'DELETE' });
 }
 
 export function createUser(token: string, payload: { username: string; email?: string | null; password: string; role: number; is_active: boolean }) {

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import redis
 
-from config import UNKNOWN_ALERT_COOLDOWN_SECONDS
+from config import UNKNOWN_ALERT_COOLDOWN_SECONDS, UNKNOWN_REID_THRESHOLD, UNKNOWN_REID_TTL_SECONDS
 from face_pipeline import FacePipelineResult
 from redis_state import RedisStateService, alert_cooldown_key
 from rule_engine import RuleEngine
@@ -36,6 +36,8 @@ class UnknownEventDetector:
         if not decision.should_alert:
             return None
 
+        target_status = "unverified" if decision.warning_type.startswith("unverified") else "unknown"
+
         cooldown_key = (track.track_id, decision.warning_type)
         cooldown_seconds = decision.cooldown_seconds or UNKNOWN_ALERT_COOLDOWN_SECONDS
         now = time.time()
@@ -61,10 +63,19 @@ class UnknownEventDetector:
         if camera_redis_key:
             self._set_redis_cooldown(camera_redis_key, cooldown_seconds)
         self.last_alert_by_track_and_type[cooldown_key] = now
-        face_result = max(
-            track.history,
-            key=lambda result: result.face.det_score,
-        )
+        face_result = self._select_face_result(track, target_status)
+        if target_status == "unknown":
+            similar_unknown = self._find_similar_unknown(camera_id or "default", face_result.face.vector)
+            if similar_unknown:
+                track.mark_unknown_alert_sent(str(similar_unknown.get("event_id", "reid_suppressed")))
+                print(
+                    "unknown_reid_suppressed",
+                    camera_id,
+                    track.track_id,
+                    similar_unknown.get("event_id"),
+                    f"{float(similar_unknown.get('score', 0.0)):.3f}",
+                )
+                return None
         return UnknownWarning(
             warning_type=decision.warning_type,
             warning_level=decision.warning_level,
@@ -74,6 +85,17 @@ class UnknownEventDetector:
             zone=track.zone,
             rule_config=decision.rule_config,
         )
+
+    def remember_unknown_warning(self, camera_id: str, warning: UnknownWarning, event_id: str) -> None:
+        try:
+            self.redis_state.set_unknown_reid(
+                camera_id or "default",
+                event_id,
+                warning.face_result.face.vector,
+                UNKNOWN_REID_TTL_SECONDS,
+            )
+        except redis.RedisError:
+            pass
 
     def _is_in_redis_cooldown(self, key: str) -> bool:
         try:
@@ -86,3 +108,15 @@ class UnknownEventDetector:
             self.redis_state.set_cooldown(key, ttl_seconds)
         except redis.RedisError:
             pass
+
+    def _find_similar_unknown(self, camera_id: str, vector: list[float]) -> dict | None:
+        try:
+            return self.redis_state.find_similar_unknown_reid(camera_id, vector, UNKNOWN_REID_THRESHOLD)
+        except redis.RedisError:
+            return None
+
+    def _select_face_result(self, track: Track, target_status: str) -> FacePipelineResult:
+        matching_results = [result for result in track.history if result.recognition.status == target_status]
+        if matching_results:
+            return max(matching_results, key=lambda result: result.quality_score)
+        return track.history[-1]

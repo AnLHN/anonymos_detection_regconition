@@ -40,27 +40,10 @@ def login(request: LoginRequest, http_request: Request) -> dict:
 
 @router.post("/register")
 def register(request: RegisterRequest) -> dict:
-    username = request.username.strip()
-    email = request.email.strip().lower()
-    password = request.password
-    if len(username) < 3:
-        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
-    if "@" not in email or "." not in email:
-        raise HTTPException(status_code=400, detail="Invalid email")
-    if len(password) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
-    try:
-        execute(
-            """
-            INSERT INTO accounts (id, username, email, password_hash, role, is_active)
-            VALUES ((SELECT COALESCE(MAX(id), 0) + 1 FROM accounts), %s, %s, %s, 0, true)
-            """,
-            (username, email, password),
-        )
-    except UniqueViolation:
-        raise HTTPException(status_code=409, detail="Username or email already exists") from None
-    token = create_access_token(username, 0)
-    return {"access_token": token, "token_type": "bearer"}
+    raise HTTPException(
+        status_code=403,
+        detail="Public registration is disabled. Accounts must be created by administrators."
+    )
 
 
 @router.get("/me")

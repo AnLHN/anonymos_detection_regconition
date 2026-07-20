@@ -165,7 +165,8 @@ export default function CamerasPanel({
   }
 
   return (
-    <article className="card camera-management-card">
+    <>
+      <article className="card camera-management-card">
       <div className="section-heading compact-heading camera-page-heading">
         <div>
           <h2>Camera</h2>
@@ -191,14 +192,24 @@ export default function CamerasPanel({
               <span>{camera.location || camera.camera_id}</span>
               {shouldShowCameraError(camera) ? <span className="error">{camera.last_error}</span> : null}
             </button>
-            <button
-              type="button"
-              className="secondary camera-reload-button"
-              onClick={() => handleReloadCamera(camera)}
-              disabled={!canUpdate || !camera.is_active || reloadingCameraId === camera.camera_id || getReloadCooldownRemaining(camera.camera_id) > 0}
-            >
-              {reloadingCameraId === camera.camera_id ? 'Đang reload...' : 'Reload'}
-            </button>
+            <div className="camera-actions">
+              <button
+                type="button"
+                className="secondary camera-edit-button"
+                onClick={() => openEditModal(camera)}
+                disabled={!canUpdate}
+              >
+                Sửa
+              </button>
+              <button
+                type="button"
+                className="secondary camera-reload-button"
+                onClick={() => handleReloadCamera(camera)}
+                disabled={!canUpdate || !camera.is_active || reloadingCameraId === camera.camera_id || getReloadCooldownRemaining(camera.camera_id) > 0}
+              >
+                {reloadingCameraId === camera.camera_id ? 'Đang reload...' : 'Reload'}
+              </button>
+            </div>
           </article>
         )) : (
           <div className="item">
@@ -207,6 +218,7 @@ export default function CamerasPanel({
           </div>
         )}
       </div>
+    </article>
 
       {modalMode ? (
         <div className="camera-modal-backdrop" role="presentation" onMouseDown={closeFromBackdrop}>
@@ -239,8 +251,18 @@ export default function CamerasPanel({
                 </label>
               </div>
               <div className="form-footer camera-modal-footer">
-                <label className="inline-check"><input name="is_active" type="checkbox" defaultChecked={modalCamera ? modalCamera.is_active : true} /> Camera đang hoạt động</label>
-                <label className="inline-check"><input name="always_on" type="checkbox" defaultChecked={Boolean(modalCamera?.config?.always_on)} /> Luôn bật camera này</label>
+                <div className="camera-modal-toggles">
+                  <label className="custom-switch">
+                    <input name="is_active" type="checkbox" defaultChecked={modalCamera ? modalCamera.is_active : true} />
+                    <span className="switch-slider" />
+                    <span>Camera đang hoạt động</span>
+                  </label>
+                  <label className="custom-switch">
+                    <input name="always_on" type="checkbox" defaultChecked={Boolean(modalCamera?.config?.always_on)} />
+                    <span className="switch-slider" />
+                    <span>Luôn bật camera này</span>
+                  </label>
+                </div>
                 <div className="form-actions">
                   <button type="submit" disabled={saving}>{saving ? 'Đang lưu...' : 'Lưu camera'}</button>
                   <button type="button" className="secondary" onClick={closeModal} disabled={saving}>Hủy</button>
@@ -251,6 +273,6 @@ export default function CamerasPanel({
           </section>
         </div>
       ) : null}
-    </article>
+    </>
   );
 }

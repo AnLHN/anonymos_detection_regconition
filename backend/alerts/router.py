@@ -72,6 +72,8 @@ def list_alerts(
     if review_status:
         filters.append("review_status = %s")
         params.append(review_status)
+    else:
+        filters.append("review_status <> 'resolved_known'")
     if warning_level:
         filters.append("warning_level = %s")
         params.append(warning_level)

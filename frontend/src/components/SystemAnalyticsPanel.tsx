@@ -38,6 +38,7 @@ export default function SystemAnalyticsPanel() {
   const securitySignals = analytics?.security.signals || [];
   const updatedText = analytics?.updated_at ? new Date(analytics.updated_at).toLocaleTimeString('vi-VN') : 'chưa cập nhật';
   const riskLabel = useMemo(() => riskText(analytics?.security.risk_level), [analytics?.security.risk_level]);
+  const resourceStatusText = getResourceStatusText(analytics?.resources.linux_metrics_enabled, analytics?.resources.source);
 
   if (!hasPermission(currentUser, 'system:read')) {
     return (
@@ -52,8 +53,8 @@ export default function SystemAnalyticsPanel() {
     <section className="native-analytics-page">
       <div className="native-analytics-header">
         <div>
-          <h2>System Monitor</h2>
-          <p>Prometheus thu thập số liệu, frontend chỉ hiển thị phần cần cho vận hành và bảo mật. Grafana đã được bỏ khỏi giao diện mặc định.</p>
+          <h2>Giám sát hệ thống</h2>
+          <p>Giám sát hiệu năng thiết bị và tài nguyên hệ thống theo thời gian thực.</p>
         </div>
         <div className="analytics-refresh">
           <span className={analytics?.prometheus.connected ? 'status-dot ok' : 'status-dot error'} />
@@ -75,7 +76,7 @@ export default function SystemAnalyticsPanel() {
 
       <div className="analytics-section-title">
         <h3>Tài nguyên hệ thống real-time native</h3>
-        <span>{analytics?.resources.linux_metrics_enabled ? 'Host metrics online' : 'Host metrics chưa bật trên Windows'}</span>
+        <span>{resourceStatusText}</span>
       </div>
 
       <div className="analytics-resource-grid">
@@ -202,6 +203,13 @@ function riskText(level?: string) {
   if (level === 'warning') return 'Cần theo dõi';
   if (level === 'ok') return 'Ổn định';
   return 'Chưa đủ dữ liệu';
+}
+
+function getResourceStatusText(isEnabled?: boolean, source?: string) {
+  if (!isEnabled) return 'Host metrics chưa bật';
+  if (source === 'native') return 'Host metrics native';
+  if (source === 'prometheus') return 'Host metrics Prometheus';
+  return 'Host metrics online';
 }
 
 function statusText(status: string) {

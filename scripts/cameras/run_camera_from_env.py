@@ -31,7 +31,7 @@ def main() -> None:
         "--height",
         str(get_int("DEFAULT_DISPLAY_HEIGHT", 720)),
         "--ai-interval",
-        str(get_float("DEFAULT_AI_INTERVAL", 0.7)),
+        str(get_float("DEFAULT_AI_INTERVAL", 0.0)),
         "--reconnect-delay",
         str(get_float("DEFAULT_RECONNECT_DELAY", 5.0)),
         "--window",

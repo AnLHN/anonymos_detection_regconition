@@ -3,16 +3,33 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT_DIR/infra/docker-compose.yml"
-PYTHON_BIN="${PYTHON_BIN:-python}"
-USE_WINDOWS_PYTHON=0
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  if command -v powershell.exe >/dev/null 2>&1; then
-    USE_WINDOWS_PYTHON=1
-  elif command -v py >/dev/null 2>&1; then
-    PYTHON_BIN="py"
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  elif [[ -x "$ROOT_DIR/../venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/../venv/bin/python"
   elif command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
+  else
+    PYTHON_BIN="python"
   fi
+fi
+export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
+export INSIGHTFACE_DEVICE="${INSIGHTFACE_DEVICE:-cuda}"
+USE_WINDOWS_PYTHON=0
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v py >/dev/null 2>&1; then
+    PYTHON_BIN="py"
+  elif command -v powershell.exe >/dev/null 2>&1; then
+    USE_WINDOWS_PYTHON=1
+  fi
+fi
+PY_SITE_PACKAGES="$("$PYTHON_BIN" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
+if [[ -n "$PY_SITE_PACKAGES" ]]; then
+  NVIDIA_PIP_LIBS="$PY_SITE_PACKAGES/tensorrt_libs:$PY_SITE_PACKAGES/nvidia/cudnn/lib:$PY_SITE_PACKAGES/nvidia/cu13/lib"
+  export LD_LIBRARY_PATH="$PY_SITE_PACKAGES/tensorrt_libs:$PY_SITE_PACKAGES/nvidia/cudnn/lib:/usr/local/cuda/targets/sbsa-linux/lib:$PY_SITE_PACKAGES/nvidia/cu13/lib:${LD_LIBRARY_PATH:-}"
 fi
 LAN_MODE="${LAN_MODE:-1}"
 if [[ "$LAN_MODE" == "1" || "$LAN_MODE" == "true" ]]; then
@@ -24,6 +41,11 @@ else
 fi
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+export POSTGRES_DSN="${POSTGRES_DSN:-host=localhost port=7001 dbname=face_db user=face_user password=face_password}"
+export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
+export QDRANT_URL="${QDRANT_URL:-http://localhost:7002}"
+export RABBITMQ_URL="${RABBITMQ_URL:-amqp://face_user:face_password@localhost:5672/}"
+BACKEND_READY_TIMEOUT="${BACKEND_READY_TIMEOUT:-120}"
 FRONTEND_READY_TIMEOUT="${FRONTEND_READY_TIMEOUT:-180}"
 FRONTEND_PREWARM_PATHS="${FRONTEND_PREWARM_PATHS:-/ /alerts /cameras /rules /employees /users /system /login}"
 NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-rapi-local}"
@@ -47,7 +69,7 @@ fi
 if [[ "${#profiles[@]}" -gt 0 && -z "${COMPOSE_PROFILES:-}" ]]; then
   export COMPOSE_PROFILES="$(IFS=,; echo "${profiles[*]}")"
 fi
-LAN_IP="${LAN_IP:-192.168.2.17}"
+LAN_IP="${LAN_IP:-192.168.2.182}"
 if [[ "$LAN_MODE" == "1" || "$LAN_MODE" == "true" ]]; then
   if [[ -n "$LAN_IP" && -z "${NEXT_PUBLIC_API_BASE:-}" ]]; then
     export NEXT_PUBLIC_API_BASE="http://$LAN_IP:$FRONTEND_PORT/api"
@@ -101,7 +123,11 @@ start_process() {
     fi
   fi
   echo "[start] Starting $name..."
-  "$@" > "$RUNTIME_DIR/$name.log" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid "$@" > "$RUNTIME_DIR/$name.log" 2>&1 &
+  else
+    nohup "$@" > "$RUNTIME_DIR/$name.log" 2>&1 &
+  fi
   echo $! > "$pid_file"
 }
 
@@ -186,20 +212,30 @@ stop_port_process() {
   fi
 }
 
-if [[ "$USE_WINDOWS_PYTHON" == "1" ]]; then
-  if port_is_open "$BACKEND_PORT"; then
-    echo "[start] backend already listening on port $BACKEND_PORT"
-  else
-    start_process "backend" "$RUNTIME_DIR/backend.pid" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "py -3 -m uvicorn backend.main:app --host $BACKEND_HOST --port $BACKEND_PORT --reload"
+ensure_backend() {
+  local command_description="$1"
+  shift
+  local health_url="http://127.0.0.1:$BACKEND_PORT/"
+  if http_is_ready "$health_url"; then
+    echo "[start] backend is serving HTTP at $health_url"
+    return
   fi
+  if port_is_open "$BACKEND_PORT"; then
+    echo "[start] backend port $BACKEND_PORT is occupied but health is not ready; restarting it..."
+    stop_port_process "backend" "$BACKEND_PORT"
+    sleep 2
+  fi
+  rm -f "$RUNTIME_DIR/backend.pid"
+  start_process "backend" "$RUNTIME_DIR/backend.pid" "$@"
+  wait_http_ready "backend" "$health_url" "$RUNTIME_DIR/backend.pid" "$BACKEND_READY_TIMEOUT"
+}
+
+if [[ "$USE_WINDOWS_PYTHON" == "1" ]]; then
+  ensure_backend "windows" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "py -3 -m uvicorn backend.main:app --host $BACKEND_HOST --port $BACKEND_PORT"
   start_process "alert-consumer" "$RUNTIME_DIR/alert-consumer.pid" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "py -3 \"$ROOT_DIR/scripts/alerts/run_alert_consumer.py\""
   start_process "worker" "$RUNTIME_DIR/worker.pid" powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "py -3 \"$ROOT_DIR/scripts/cameras/run_worker.py\""
 else
-  if port_is_open "$BACKEND_PORT"; then
-    echo "[start] backend already listening on port $BACKEND_PORT"
-  else
-    start_process "backend" "$RUNTIME_DIR/backend.pid" "$PYTHON_BIN" -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" --reload
-  fi
+  ensure_backend "linux" "$PYTHON_BIN" -m uvicorn backend.main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT"
   start_process "alert-consumer" "$RUNTIME_DIR/alert-consumer.pid" "$PYTHON_BIN" "$ROOT_DIR/scripts/alerts/run_alert_consumer.py"
   start_process "worker" "$RUNTIME_DIR/worker.pid" "$PYTHON_BIN" "$ROOT_DIR/scripts/cameras/run_worker.py"
 fi

@@ -60,3 +60,26 @@ class PostgresEventService:
             with conn.cursor() as cur:
                 cur.execute(sql, values)
             conn.commit()
+
+    def resolve_unknown_as_known(self, event_id: str, label: str, score: float | None) -> bool:
+        note = f"Auto resolved as known: {label}"
+        if score is not None:
+            note = f"{note} ({score:.3f})"
+        with psycopg.connect(self.dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE unknown_events
+                    SET review_status = 'resolved_known',
+                        reviewed_at = now(),
+                        reviewed_by = 'ai_worker',
+                        note = %s
+                    WHERE event_id = %s
+                      AND deleted_at IS NULL
+                      AND review_status <> 'resolved_known'
+                    """,
+                    (note, event_id),
+                )
+                updated = cur.rowcount > 0
+            conn.commit()
+        return updated

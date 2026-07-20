@@ -4,7 +4,18 @@ from typing import Any
 import cv2
 from insightface.app import FaceAnalysis
 
-from config import INSIGHTFACE_DETECTION_MODEL, INSIGHTFACE_DEVICE, MIN_DETECTION_SCORE, MIN_FACE_HEIGHT, MIN_FACE_WIDTH
+from config import (
+    INSIGHTFACE_DET_SIZE,
+    INSIGHTFACE_DETECTION_MODEL,
+    INSIGHTFACE_DEVICE,
+    INSIGHTFACE_ROOT,
+    RECOGNITION_DETECTION_SCORE,
+    RECOGNITION_MIN_FACE_HEIGHT,
+    RECOGNITION_MIN_FACE_WIDTH,
+    TRACK_DETECTION_SCORE,
+    TRT_ENGINE_DIR,
+)
+from onnx_providers import insightface_providers
 
 
 @dataclass(frozen=True)
@@ -25,14 +36,20 @@ class DetectedFace:
 
 class InsightFaceDetector:
     def __init__(self) -> None:
-        providers = ["CPUExecutionProvider"]
-        ctx_id = -1
-        if INSIGHTFACE_DEVICE.lower() == "cuda":
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-            ctx_id = 0
-
-        self.app = FaceAnalysis(name=INSIGHTFACE_DETECTION_MODEL, providers=providers)
-        self.app.prepare(ctx_id=ctx_id, det_size=(640, 640))
+        providers, provider_options, ctx_id = insightface_providers(INSIGHTFACE_DEVICE)
+        self.app = FaceAnalysis(
+            name=INSIGHTFACE_DETECTION_MODEL,
+            root=INSIGHTFACE_ROOT,
+            allowed_modules=["detection"],
+            providers=providers,
+            provider_options=provider_options,
+        )
+        self._attach_tensorrt_engine()
+        self.app.prepare(
+            ctx_id=ctx_id,
+            det_size=(INSIGHTFACE_DET_SIZE, INSIGHTFACE_DET_SIZE),
+            det_thresh=TRACK_DETECTION_SCORE,
+        )
 
     def detect(self, image) -> list[DetectedFace]:
         faces = []
@@ -42,9 +59,9 @@ class InsightFaceDetector:
             width = x2 - x1
             height = y2 - y1
             quality_pass = (
-                det_score >= MIN_DETECTION_SCORE
-                and width >= MIN_FACE_WIDTH
-                and height >= MIN_FACE_HEIGHT
+                det_score >= RECOGNITION_DETECTION_SCORE
+                and width >= RECOGNITION_MIN_FACE_WIDTH
+                and height >= RECOGNITION_MIN_FACE_HEIGHT
             )
             faces.append(
                 DetectedFace(
@@ -55,6 +72,18 @@ class InsightFaceDetector:
                 )
             )
         return faces
+
+    def _attach_tensorrt_engine(self) -> None:
+        engine_path = TRT_ENGINE_DIR / "det_10g_640_trt11.engine"
+        if INSIGHTFACE_DEVICE.lower() != "cuda" or INSIGHTFACE_DET_SIZE != 640 or not engine_path.exists():
+            return
+        try:
+            from tensorrt_session import TensorRTInferenceSession
+        except ImportError as error:
+            print(f"TensorRT engine skipped for detection: {error}")
+            return
+        self.app.det_model.session = TensorRTInferenceSession(engine_path)
+        print(f"TensorRT engine enabled for detection: {engine_path}")
 
 
 def draw_faces(image, faces: list[DetectedFace]):
